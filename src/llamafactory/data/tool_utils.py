@@ -85,6 +85,21 @@ QWEN_TOOL_PROMPT = (
     """"arguments": <args-json-object>}}\n</tool_call>"""
 )
 
+QWEN35_TOOL_PROMPT = (
+    "\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>{tool_text}"
+    "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n"
+    "<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n"
+    "<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n"
+    "</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n"
+    "- Function calls MUST follow the specified format: "
+    "an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n"
+    "- Required parameters MUST be specified\n"
+    "- You may provide optional reasoning for your function call in natural language "
+    "BEFORE the function call, but NOT after\n"
+    "- If there is no function call available, answer the question like normal with your current knowledge "
+    "and do not tell the user about function calls\n</IMPORTANT>"
+)
+
 SEED_TOOL_PROMPT = (
     "system\nYou are Doubao, a helpful AI assistant. You may call one or more functions to assist with the user query."
     "Tool List:\nYou are authorized to use the following tools (described in JSON Schema format). Before performing "
@@ -453,6 +468,57 @@ class QwenToolUtils(ToolUtils):
         return results
 
 
+class Qwen35ToolUtils(ToolUtils):
+    r"""Qwen 3.5 tool using template."""
+
+    @override
+    @staticmethod
+    def tool_formatter(tools: list[dict[str, Any]]) -> str:
+        tool_text = ""
+        for tool in tools:
+            tool = tool.get("function", tool) if tool.get("type") == "function" else tool
+            tool_text += "\n" + json.dumps(tool, ensure_ascii=False)
+
+        return QWEN35_TOOL_PROMPT.format(tool_text=tool_text)
+
+    @override
+    @staticmethod
+    def function_formatter(functions: list["FunctionCall"]) -> str:
+        function_texts = []
+        for func in functions:
+            name, arguments = func.name, json.loads(func.arguments)
+            prompt = f"<tool_call>\n<function={name}>"
+            for key, value in arguments.items():
+                prompt += f"\n<parameter={key}>"
+                if not isinstance(value, str):
+                    value = json.dumps(value, ensure_ascii=False)
+                prompt += f"\n{value}\n</parameter>"
+            prompt += "\n</function>\n</tool_call>"
+            function_texts.append(prompt)
+
+        return "\n".join(function_texts)
+
+    @override
+    @staticmethod
+    def tool_extractor(content: str) -> Union[str, list["FunctionCall"]]:
+        results = []
+        regex = re.compile(r"<tool_call>\s*<function=\s*([^\s<>]+)\s*(.*?)\s*</function>\s*</tool_call>", re.DOTALL)
+        for func_name, params_block in re.findall(regex, content):
+            args_dict = {}
+            param_pattern = re.compile(r"<parameter=(.*?)>(.*?)</parameter>", re.DOTALL)
+            for key, raw_value in re.findall(param_pattern, params_block.strip()):
+                value = raw_value.strip()
+                try:
+                    parsed_value = json.loads(value)
+                except json.JSONDecodeError:
+                    parsed_value = raw_value.strip()
+                args_dict[key] = parsed_value
+
+            results.append(FunctionCall(func_name.strip(), json.dumps(args_dict, ensure_ascii=False)))
+
+        return results if results else content
+
+
 class GLM4MOEToolUtils(QwenToolUtils):
     r"""GLM-4-MOE tool using template."""
 
@@ -662,6 +728,7 @@ TOOLS = {
     "minimax2": MiniMaxM2ToolUtils(),
     "mistral": MistralToolUtils(),
     "qwen": QwenToolUtils(),
+    "qwen3_5": Qwen35ToolUtils(),
     "glm4_moe": GLM4MOEToolUtils(),
     "seed_oss": SeedToolUtils(),
     "ling": LingToolUtils(),
