@@ -1,33 +1,31 @@
 # Configuration file for the Sphinx documentation builder.
 
-import os
-import sys
 
 # Define common settings here
-project = 'LlamaFactory'
-copyright = '2024, LlamaFactory Team'
-author = 'LlamaFactory Team'
+project = "LlamaFactory"
+copyright = "2024, LlamaFactory Team"
+author = "LlamaFactory Team"
 
 extensions = [
-    'sphinx.ext.autodoc',
-    'sphinx.ext.viewcode',
-    'sphinx.ext.napoleon',
-    'myst_parser',
+    "sphinx.ext.autodoc",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.napoleon",
+    "myst_parser",
 ]
 
-templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-html_theme = 'sphinx_rtd_theme'
+html_theme = "sphinx_rtd_theme"
 
-html_static_path = ['_static']
+html_static_path = ["_static"]
 
 html_js_files = [
-    'js/switcher.js',
+    "js/switcher.js",
 ]
 
 html_css_files = [
-    'css/lang-switcher.css',
+    "css/lang-switcher.css",
 ]
 
 myst_enable_extensions = [

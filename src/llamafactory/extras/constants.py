@@ -2812,6 +2812,29 @@ register_model_group(
 
 register_model_group(
     models={
+        "Qwen3.5-27B": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-27B",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-27B",
+        },
+        "Qwen3.5-35B-A3B": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-35B-A3B",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-35B-A3B",
+        },
+        "Qwen3.5-122B-A10B": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-122B-A10B",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-122B-A10B",
+        },
+        "Qwen3.5-397B-A17B": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-397B-A17B",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-397B-A17B",
+        },
+    },
+    template="qwen3_5",
+)
+
+
+register_model_group(
+    models={
         "Qwen2-Audio-7B": {
             DownloadSource.DEFAULT: "Qwen/Qwen2-Audio-7B",
             DownloadSource.MODELSCOPE: "Qwen/Qwen2-Audio-7B",

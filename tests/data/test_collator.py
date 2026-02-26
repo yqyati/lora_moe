@@ -122,6 +122,8 @@ def test_multimodal_collator():
         **tokenizer_module["processor"].image_processor(fake_image),
     }
     if not is_transformers_version_greater_than("5.0.0"):
+        # adapt position_ids and rope_deltas for transformers < 5.0.0
+        # https://github.com/huggingface/transformers/pull/43972
         expected_input["position_ids"] = [[[0, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1]]] * 3
         expected_input["rope_deltas"] = [[-8]]
 
