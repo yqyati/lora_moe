@@ -76,7 +76,7 @@ class BaseTrainer:
         if self.args.enable_activation_checkpointing:
             self.model.gradient_checkpointing_enable({"use_reentrant": False})
 
-        self._accelerate_engine = None
+        self._deepspeed_engine = None
         dist_name = self.args.dist_config.name if self.args.dist_config is not None else None
 
         if dist_name == "deepspeed":
@@ -108,6 +108,7 @@ class BaseTrainer:
             cutoff_len=self.args.cutoff_len,
             batching_workers=self.args.batching_workers,
             batching_strategy=self.args.batching_strategy,
+            seed=self.args.seed,
         )
 
     def _shard_model(self) -> None:

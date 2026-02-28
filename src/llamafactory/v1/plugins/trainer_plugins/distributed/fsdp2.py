@@ -166,12 +166,11 @@ class FSDP2Engine:
                     offload_policy=CPUOffloadPolicy(pin_memory=self.pin_memory) if self.offload_params else None,
                 )
 
-        use_gradient_checkpointing = True  # Could be configurable
-        if use_gradient_checkpointing:
+        # BaseTrainer is the single source of truth for gradient checkpointing.
+        # FSDP2 only applies the input-grad compatibility hook when checkpointing is already enabled.
+        if getattr(model, "is_gradient_checkpointing", False):
             if self.rank == 0:
-                logger.info("Enabling gradient checkpointing (transformers native)...")
-
-            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+                logger.info("Gradient checkpointing is enabled. Applying FSDP2 input grad preparation.")
 
             if hasattr(model, "enable_input_require_grads"):
                 model.enable_input_require_grads()
