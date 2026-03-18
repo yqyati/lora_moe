@@ -1058,7 +1058,9 @@ class MiniCPMVPlugin(BasePlugin):
                 chunk_input=True,
                 sampling_rate=getattr(processor, "audio_sampling_rate", 16000),
             )
-            audio_feature_lens = [torch.tensor(audio_feature_len) for audio_feature_len in audio_feature_lens]
+            audio_feature_lens = [
+                x.clone().detach() if isinstance(x, torch.Tensor) else torch.tensor(x) for x in audio_feature_lens
+            ]
             mm_inputs.update({"audio_features": audio_features, "audio_feature_lens": audio_feature_lens})
             if kwargs.get("ret_phs", False):
                 mm_inputs.update({"audio_phs": audio_phs})
@@ -1098,7 +1100,7 @@ class MiniCPMVPlugin(BasePlugin):
                 num_image_tokens += 1
 
             while VIDEO_PLACEHOLDER in content:
-                video_seqlen = len(mm_inputs["pixel_values"][num_video_tokens]) if self.expand_mm_tokens else 1
+                video_seqlen = len(mm_inputs["image_sizes"][num_video_tokens]) if self.expand_mm_tokens else 1
                 content = content.replace(VIDEO_PLACEHOLDER, "{{image}}" * video_seqlen, 1)
                 num_video_tokens += 1
 
