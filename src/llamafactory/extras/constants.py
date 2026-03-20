@@ -77,6 +77,20 @@ METHODS = ["full", "freeze", "lora", "oft"]
 
 MOD_SUPPORTED_MODELS = {"bloom", "falcon", "gemma", "llama", "mistral", "mixtral", "phi", "starcoder2"}
 
+MROPE_MODELS = {
+    "glm4v",
+    "glm_ocr",
+    "Keye",
+    "qwen2_vl",
+    "qwen2_5_vl",
+    "qwen2_5_omni_thinker",
+    "qwen3_omni_moe_thinker",
+    "qwen3_vl",
+    "qwen3_vl_moe",
+    "qwen3_5",
+    "qwen3_5_moe",
+}
+
 MULTIMODAL_SUPPORTED_MODELS = set()
 
 PEFT_METHODS = {"lora", "oft"}
