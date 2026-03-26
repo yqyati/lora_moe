@@ -85,6 +85,10 @@ class TrainingArguments:
         default=42,
         metadata={"help": "Random seed that will be set at the beginning of training."},
     )
+    logging_steps: int = field(
+        default=1,
+        metadata={"help": "Log metrics every N optimizer steps."},
+    )
 
     def __post_init__(self) -> None:
         self.dist_config = get_plugin_config(self.dist_config)
