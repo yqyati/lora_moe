@@ -119,12 +119,12 @@ def load_checkpoint(model: HFModel, optimizer: torch.optim.Optimizer, ckpt_dir: 
 
 
 class FSDP2Engine:
-    def __init__(self, dist_config: dict):
+    def __init__(self, dist_config: dict, bf16: bool = False):
         self.dist_interface = DistributedInterface()
         self.rank = self.dist_interface.get_rank()
         self.local_rank = self.dist_interface.get_local_rank()
         self.world_size = self.dist_interface.get_world_size()
-        self.mixed_precision = dist_config.get("mixed_precision", "bf16")
+        self.mixed_precision = "bf16" if bf16 else "fp32"
         self.reshard_after_forward = dist_config.get("reshard_after_forward", True)
         self.offload_params = dist_config.get("offload_params", False)
         self.pin_memory = dist_config.get("pin_memory", True)
@@ -147,10 +147,7 @@ class FSDP2Engine:
         if self.mixed_precision == "bf16":
             param_dtype = torch.bfloat16
             reduce_dtype = torch.float32
-        elif self.mixed_precision == "fp16":
-            param_dtype = torch.float16
-            reduce_dtype = torch.float32
-        else:
+        elif self.mixed_precision == "fp32":
             param_dtype = torch.float32
             reduce_dtype = torch.float32
 
