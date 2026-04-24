@@ -461,9 +461,50 @@ class FinetuningArguments(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
-    finetuning_type: Literal["lora", "oft", "freeze", "full"] = field(
+    finetuning_type: Literal["lora", "oft", "freeze", "full", "moe_lora"] = field(
         default="lora",
         metadata={"help": "Which fine-tuning method to use."},
+    )
+    moe_lora_n_experts: int = field(
+        default=8,
+        metadata={"help": "MoE-LoRA: pool size N_L. V1=8, V2=512, V3=64, V4=4."},
+    )
+    moe_lora_rank: int = field(
+        default=8,
+        metadata={"help": "MoE-LoRA: rank of each LoRA expert. V1=8, V2=4, V3=32, V4=16."},
+    )
+    moe_lora_alpha: int = field(
+        default=16,
+        metadata={"help": "MoE-LoRA: scaling factor (alpha / rank). Standard alpha = 2 * rank."},
+    )
+    moe_lora_top_k: int = field(
+        default=2,
+        metadata={"help": "MoE-LoRA: top-k LoRA experts to activate per token."},
+    )
+    moe_lora_pool_share: Literal["per_layer", "global"] = field(
+        default="per_layer",
+        metadata={"help": "MoE-LoRA: LoRA pool sharing. V1/V4=per_layer, V2/V3=global."},
+    )
+    moe_lora_w_share: Literal["per_layer", "global"] = field(
+        default="per_layer",
+        metadata={
+            "help": "MoE-LoRA: routing projection W sharing. Default per_layer keeps positional info; "
+            "V2' ablation uses global."
+        },
+    )
+    moe_lora_detach_p_e: bool = field(
+        default=False,
+        metadata={
+            "help": "MoE-LoRA: detach router_logits before LoRA branch. "
+            "No effect when MoE backbone is fully frozen; reserved for future stage-1 router tuning."
+        },
+    )
+    moe_lora_target_layers: str = field(
+        default="all",
+        metadata={
+            "help": "MoE-LoRA: which MoE layers to inject. "
+            "'all' / 'first_half' / 'last_half' / 'last_third' / explicit '0,5,10,15'."
+        },
     )
     use_llama_pro: bool = field(
         default=False,
@@ -573,7 +614,7 @@ class FinetuningArguments(
         self.apollo_target: list[str] = split_arg(self.apollo_target)
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
 
-        assert self.finetuning_type in ["lora", "oft", "freeze", "full"], "Invalid fine-tuning method."
+        assert self.finetuning_type in ["lora", "oft", "freeze", "full", "moe_lora"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
 

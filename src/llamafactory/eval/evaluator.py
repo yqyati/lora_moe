@@ -65,6 +65,19 @@ class Evaluator:
         self.tokenizer.padding_side = "right"  # avoid overflow issue in batched inference for llama2
         self.template = get_template_and_fix_tokenizer(self.tokenizer, self.data_args)
         self.model = load_model(self.tokenizer, self.model_args, finetuning_args)
+
+        # MoE-LoRA: 加载自定义 checkpoint（PEFT 不识别我们的 RoutingProjection / LoRAPool）
+        if finetuning_args.finetuning_type == "moe_lora":
+            from ..model.model_utils.moe_lora import load_moe_lora_state
+
+            adapter_paths = self.model_args.adapter_name_or_path
+            if not adapter_paths:
+                raise ValueError(
+                    "MoE-LoRA evaluation requires --adapter_name_or_path pointing to the trained checkpoint."
+                )
+            self.model = load_moe_lora_state(self.model, adapter_paths[0])
+            self.model.eval()
+
         self.eval_template = get_eval_template(self.eval_args.lang)
         self.choice_inputs = [self.tokenizer.encode(ch, add_special_tokens=False)[-1] for ch in CHOICES]
 

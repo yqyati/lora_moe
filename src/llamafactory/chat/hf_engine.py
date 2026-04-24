@@ -59,6 +59,19 @@ class HuggingfaceEngine(BaseEngine):
         self.model = load_model(
             self.tokenizer, model_args, finetuning_args, is_trainable=False, add_valuehead=(not self.can_generate)
         )  # must after fixing tokenizer to resize vocab
+
+        # MoE-LoRA: 加载自定义 checkpoint（PEFT 不识别 RoutingProjection / LoRAPool）
+        if finetuning_args.finetuning_type == "moe_lora":
+            from ..model.model_utils.moe_lora import load_moe_lora_state
+
+            adapter_paths = model_args.adapter_name_or_path
+            if not adapter_paths:
+                raise ValueError(
+                    "MoE-LoRA chat requires --adapter_name_or_path pointing to the trained checkpoint."
+                )
+            self.model = load_moe_lora_state(self.model, adapter_paths[0])
+            self.model.eval()
+
         self.generating_args = generating_args.to_dict()
         try:
             asyncio.get_event_loop()

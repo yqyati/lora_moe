@@ -318,6 +318,45 @@ def _setup_lora_tuning(
     return model
 
 
+def _setup_moe_lora(
+    model: "PreTrainedModel",
+    finetuning_args: "FinetuningArguments",
+    is_trainable: bool,
+    cast_trainable_params_to_fp32: bool,
+) -> "PreTrainedModel":
+    if not is_trainable:
+        return model
+
+    logger.info_rank0("Fine-tuning method: MoE-LoRA (Routing Compression)")
+
+    # 1. freeze 全部原模型参数
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # 2. 注入 MoE-LoRA 模块
+    #    inject_moe_lora 内部会处理: cast device/dtype + 重置 requires_grad + assertion
+    from .model_utils.moe_lora import inject_moe_lora
+
+    inject_moe_lora(model, finetuning_args)
+
+    # 3. fp32 cast (ZeRO-3 / quantized 场景必需)
+    if cast_trainable_params_to_fp32:
+        for p in model.parameters():
+            if p.requires_grad:
+                p.data = p.data.to(torch.float32)
+
+    # 4. 启动时打印 trainable / total 参数统计
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    logger.info_rank0(
+        f"MoE-LoRA setup complete | "
+        f"trainable: {trainable / 1e6:.2f}M ({100 * trainable / total:.3f}%) | "
+        f"total: {total / 1e6:.2f}M"
+    )
+
+    return model
+
+
 def init_adapter(
     config: "PretrainedConfig",
     model: "PreTrainedModel",
@@ -360,6 +399,8 @@ def init_adapter(
         model = _setup_lora_tuning(
             config, model, model_args, finetuning_args, is_trainable, cast_trainable_params_to_fp32
         )
+    elif finetuning_args.finetuning_type == "moe_lora":
+        model = _setup_moe_lora(model, finetuning_args, is_trainable, cast_trainable_params_to_fp32)
     else:
         raise NotImplementedError(f"Unknown finetuning type: {finetuning_args.finetuning_type}.")
 

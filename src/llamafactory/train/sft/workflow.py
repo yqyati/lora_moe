@@ -135,10 +135,22 @@ def run_sft(
             **metric_module,
         )
 
+    # MoE-LoRA: 注册中间 checkpoint 保存 + 监控指标 callback
+    if finetuning_args.finetuning_type == "moe_lora":
+        from ...model.model_utils.moe_lora import MoELoRASaveCallback, MoELoRAStatsCallback
+
+        trainer.add_callback(MoELoRASaveCallback(finetuning_args))
+        trainer.add_callback(MoELoRAStatsCallback())
+
     # Training
     if training_args.do_train:
         train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
         trainer.save_model()
+        # MoE-LoRA: 同步保存 trainable params + 配置到 output_dir 根目录
+        if finetuning_args.finetuning_type == "moe_lora":
+            from ...model.model_utils.moe_lora import save_moe_lora_state
+
+            save_moe_lora_state(trainer.model, training_args.output_dir, finetuning_args)
         if finetuning_args.include_effective_tokens_per_second:
             train_result.metrics["effective_tokens_per_sec"] = calculate_tps(
                 dataset_module["train_dataset"], train_result.metrics, stage="sft"
