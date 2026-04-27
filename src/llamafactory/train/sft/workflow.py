@@ -140,7 +140,11 @@ def run_sft(
         from ...model.model_utils.moe_lora import MoELoRASaveCallback, MoELoRAStatsCallback
 
         trainer.add_callback(MoELoRASaveCallback(finetuning_args))
-        trainer.add_callback(MoELoRAStatsCallback())
+        # Stats callback 必须插在 WandbCallback 等默认 logger callback 之前，否则
+        # W_fro_norm / dead_experts / p_L_entropy 这些指标会在 wandb 转发完 logs
+        # 之后才被写入 logs 字典，导致曲线缺失（但 train summary 仍能看到，因为它
+        # 读的是 state.log_history 最后一条已经写全的记录）。
+        trainer.callback_handler.callbacks.insert(0, MoELoRAStatsCallback())
 
     # Training
     if training_args.do_train:

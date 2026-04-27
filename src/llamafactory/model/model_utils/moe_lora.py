@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, List, Optional
 import safetensors.torch
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import TrainerCallback
 
 from ...extras import logging
@@ -95,8 +96,10 @@ class LoRAExpert(nn.Module):
         self.scaling = alpha / rank
 
         # 标准 LoRA 初始化
-        nn.init.kaiming_uniform_(self.A.weight, a=math.sqrt(5))
-        nn.init.zeros_(self.B.weight)
+        #nn.init.kaiming_uniform_(self.A.weight, a=math.sqrt(5))
+        #nn.init.zeros_(self.B.weight)
+        nn.init.kaiming_uniform_(self.A.weight, a=math.sqrt(5))                                                                                
+        nn.init.normal_(self.B.weight, std=1e-4)  
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         return self.scaling * self.B(self.A(h))
@@ -125,6 +128,10 @@ class LoRAPool(nn.Module):
         self.register_buffer("total_tokens", torch.zeros(1), persistent=False)
 
     def forward(self, h: torch.Tensor, p_L: torch.Tensor) -> torch.Tensor:
+        # 对齐 dtype：p_L 在 autocast 下的 softmax 会被升到 float32，但 h / out / lora
+        # expert 输出都是 bfloat16，下游 out[active] = ... 要求 dtype 一致，否则报
+        # "Index put requires the source and destination dtypes match"。
+        p_L = p_L.to(h.dtype)
         topk_vals, topk_idx = p_L.topk(self.top_k, dim=-1)  # [..., k]
 
         with torch.no_grad():
@@ -151,7 +158,11 @@ class LoRAPool(nn.Module):
                 continue
             # 只对该 expert 被激活的 token 跑 forward
             out_i = self.experts[i](h[active])  # [N_active, d_model]
-            out[active] = out[active] + weight[active] * out_i
+            # 强制对齐到 out.dtype：trainer 的混合精度策略可能把 trainable 参数（含
+            # LoRA expert）保留在 float32，输出也是 float32；而 out 是 bfloat16，
+            # in-place index_put 要求两边 dtype 完全一致，这里兜底一下。
+            update = (weight[active] * out_i).to(out.dtype)
+            out[active] = out[active] + update
         return out
 
 
@@ -170,20 +181,29 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
         self.lora_pool            LoRAPool 实例
     """
     # 1. 原 MoE 计算 + 取出 router_logits
-    #    OLMoE / Qwen3-MoE 都返回 (final_hidden_states, router_logits)
-    #    DeepSeek-V2 等可能含额外字段，用保护性解包
+    #    旧版 transformers: forward 返回 (final_hidden_states, router_logits)
+    #    新版 transformers (OLMoE): forward 只返回 final_hidden_states，
+    #      需要额外调用 self.gate 拿 router_logits。注意 OlmoeTopKRouter.forward
+    #      返回三元组 (router_logits, router_scores, router_indices)。
     original_result = self._original_forward(hidden_states)
     if isinstance(original_result, tuple):
         moe_output, router_logits, *rest = original_result
     else:
-        # 极少见情况：原 forward 只返回单个 tensor，我们就只能再调一次 gate
         moe_output = original_result
         rest = []
-        router_logits = self.gate(hidden_states)
+        # 自己跑 raw logits，绕开 OlmoeTopKRouter 内部的 float32 softmax
+        # （否则 router_logits 会变成 float32 概率，下游和 bfloat16 的 h 不兼容）
+        if hidden_states.dim() == 3:
+            h_flat_for_gate = hidden_states.reshape(-1, hidden_states.shape[-1])
+        else:
+            h_flat_for_gate = hidden_states
+        gate_bias = getattr(self.gate, "bias", None)
+        router_logits = F.linear(h_flat_for_gate, self.gate.weight, gate_bias)
 
     # 2. LoRA 分支
     detach = getattr(self._finetuning_args, "moe_lora_detach_p_e", False)
     logits_for_lora = router_logits.detach() if detach else router_logits
+    routing_mode = getattr(self._finetuning_args, "moe_lora_routing_mode", "learned")
 
     # OLMoE 内部把 hidden_states reshape 成 [B*T, D] 后再调 gate，
     # 所以 router_logits 形状是 [B*T, N_E]，而 hidden_states 仍是 [B, T, D]。
@@ -191,11 +211,17 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
     if router_logits.dim() == 2 and hidden_states.dim() == 3:
         b, t, d = hidden_states.shape
         h_flat = hidden_states.reshape(-1, d)
-        p_L = self.routing_projection(logits_for_lora)         # [B*T, N_L]
+        if routing_mode == "follow_moe":
+            p_L = _follow_moe_p_L(self, h_flat, logits_for_lora)
+        else:
+            p_L = self.routing_projection(logits_for_lora)     # [B*T, N_L]
         lora_output = self.lora_pool(h_flat, p_L)              # [B*T, D]
         lora_output = lora_output.reshape(b, t, d)
     else:
-        p_L = self.routing_projection(logits_for_lora)
+        if routing_mode == "follow_moe":
+            p_L = _follow_moe_p_L(self, hidden_states, logits_for_lora)
+        else:
+            p_L = self.routing_projection(logits_for_lora)
         lora_output = self.lora_pool(hidden_states, p_L)
 
     # 3. 相加，保持原签名
@@ -203,6 +229,26 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
     if rest:
         return (final_output, *rest)
     return final_output
+
+
+def _follow_moe_p_L(moe_block, h_flat: torch.Tensor, router_logits: torch.Tensor) -> torch.Tensor:
+    """对照组路由：直接复用原 MoE router 的 top_k 选择，跳过 RoutingProjection。
+
+    输出 p_L: [n_tokens, n_experts_moe] 稀疏权重矩阵，只在原 router 选中的 top_k
+    位置上有值（= router 的 softmax 权重），其他位置为 0。下游 LoRAPool 会按这个
+    分布做 top-k（n_lora == n_experts_moe，top_k_lora 通常等于原 MoE 的 top_k）。
+
+    实现说明：直接对 router_logits 做 softmax + topk，**等价于** OlmoeTopKRouter 内部
+    那一套（softmax → topk → 可选 norm_topk_prob）。这样就完全避开了
+    RoutingProjection，参数也不再有 W。
+    """
+    n_experts = router_logits.shape[-1]
+    top_k = moe_block.lora_pool.top_k
+    probs = torch.softmax(router_logits, dim=-1, dtype=router_logits.dtype)
+    top_vals, top_idx = probs.topk(top_k, dim=-1)
+    p_L = torch.zeros_like(probs)
+    p_L.scatter_(1, top_idx, top_vals)
+    return p_L
 
 
 def _resolve_target_layer_indices(target_layers: str, n_layers: int) -> List[int]:
@@ -263,6 +309,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     pool_share = finetuning_args.moe_lora_pool_share
     w_share = finetuning_args.moe_lora_w_share
     target_layers = finetuning_args.moe_lora_target_layers
+    routing_mode = getattr(finetuning_args, "moe_lora_routing_mode", "learned")
 
     # 取 base model 的 device 和 dtype（为 cast 用）
     sample_param = next(model.parameters())
@@ -273,6 +320,17 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     if hasattr(model.config, "num_experts"):
         n_experts_moe = model.config.num_experts
 
+    # follow_moe 模式：复用原 MoE router，n_lora 必须等于 n_experts_moe，
+    # top_k 通常等于原 MoE 的 top_k（OLMoE 是 num_experts_per_tok）。
+    if routing_mode == "follow_moe":
+        if n_lora != n_experts_moe:
+            raise ValueError(
+                f"routing_mode='follow_moe' requires moe_lora_n_experts == n_experts_moe ({n_experts_moe}), "
+                f"got {n_lora}. Set moe_lora_n_experts={n_experts_moe} in your yaml."
+            )
+        # w_share 在 follow_moe 下没有意义（不创建 W），强制 per_layer 防误解
+        w_share = "per_layer"
+
     # 1. 收集 MoE block + 按 target_layers 过滤
     all_moe_blocks = _find_moe_blocks(model)
     target_indices = set(_resolve_target_layer_indices(target_layers, len(all_moe_blocks)))
@@ -281,7 +339,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     logger.info_rank0(
         f"MoE-LoRA injecting into {len(moe_blocks)}/{len(all_moe_blocks)} MoE layers | "
         f"N_E={n_experts_moe} -> N_L={n_lora} (rank={rank}, alpha={alpha}, top_k={top_k}) | "
-        f"pool_share={pool_share}, w_share={w_share}"
+        f"pool_share={pool_share}, w_share={w_share}, routing_mode={routing_mode}"
     )
 
     # 2. 全局共享时在 model 顶层挂一份
@@ -290,25 +348,32 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     if pool_share == "global":
         shared_pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
         model.add_module("global_lora_pool", shared_pool)
-    if w_share == "global":
+    if w_share == "global" and routing_mode == "learned":
         shared_proj = RoutingProjection(n_experts_moe, n_lora).to(device=device, dtype=dtype)
         model.add_module("global_routing_projection", shared_proj)
 
     # 3. 给每个 MoE block 挂模块 + monkey-patch forward
     for moe_block in moe_blocks:
-        # RoutingProjection
-        if w_share == "per_layer":
-            proj = RoutingProjection(n_experts_moe, n_lora).to(device=device, dtype=dtype)
-            moe_block.routing_projection = proj
-        else:
-            moe_block.routing_projection = shared_proj
+        # RoutingProjection（follow_moe 模式下不创建任何 W）
+        if routing_mode == "learned":
+            if w_share == "per_layer":
+                proj = RoutingProjection(n_experts_moe, n_lora).to(device=device, dtype=dtype)
+                moe_block.routing_projection = proj
+            else:
+                # 全局共享时用 object.__setattr__ 绕过 nn.Module 的子模块自动注册：
+                # 否则同一个 shared_proj 会同时挂在 model.global_routing_projection 和
+                # 16 个 model.layers.X.mlp.routing_projection 下，state_dict 出现 17 份
+                # 重复 key，HuggingFace save_pretrained 会因 shared tensors 报错。
+                # shared_proj 已通过 add_module 注册到 model 顶层，参数仍被 optimizer 看到。
+                object.__setattr__(moe_block, "routing_projection", shared_proj)
 
         # LoRAPool
         if pool_share == "per_layer":
             pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
             moe_block.lora_pool = pool
         else:
-            moe_block.lora_pool = shared_pool
+            # 同上理由，避免 shared_pool 在 state_dict 里出现 17 份。
+            object.__setattr__(moe_block, "lora_pool", shared_pool)
 
         # monkey-patch forward
         moe_block._original_forward = moe_block.forward
@@ -372,6 +437,7 @@ def save_moe_lora_state(
         "moe_lora_w_share": finetuning_args.moe_lora_w_share,
         "moe_lora_target_layers": finetuning_args.moe_lora_target_layers,
         "moe_lora_detach_p_e": finetuning_args.moe_lora_detach_p_e,
+        "moe_lora_routing_mode": getattr(finetuning_args, "moe_lora_routing_mode", "learned"), 
         # 元信息（不属于 finetuning_args，加载时要 pop 掉）
         "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
     }

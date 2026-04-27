@@ -23,8 +23,20 @@ llamafactory-cli train examples/train_moe_lora/v1_olmoe.yaml
 # 3. 评估 GSM8K（生成式）
 python eval_scripts/eval_gsm8k.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/v1_per_layer \
+    --adapter_path saves/olmoe/moe_lora/v1_per_layer/checkpoint-500 \
     --batch_size 4
+
+# 多卡加速版（8 张 GPU 并行 + 大 batch + 减 max_new_tokens，速度快 ~30-50 倍）
+torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --batch_size 64 \
+    --max_new_tokens 512
+
+torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/v2_global_pool256 \
+    --batch_size 64 \
+    --max_new_tokens 1024
 
 # 4. 评估 MMLU（选择题，走 LlamaFactory 自带 eval）
 llamafactory-cli eval \
@@ -46,6 +58,7 @@ llamafactory-cli eval \
 | **V2'** | 全局共享 + W 也共享 | 512 | 4 | `v2prime_olmoe.yaml`（消融对照）|
 | **V3** | 全局共享 + 高 rank | 64 | 32 | `v3_olmoe.yaml` |
 | **V4** | 每层独享 + 高 rank 小池 | 4 | 16 | `v4_olmoe.yaml` |
+| **VBase** | 每层独享 + follow_moe 路由 | 64（=OLMoE 原 expert 数）| 2 | `vbase_olmoe.yaml`（对照组：路由直接复用 OLMoE）|
 
 所有变体的可训练参数量对齐到 V1 的 ±10% 范围内（公平对比）。
 

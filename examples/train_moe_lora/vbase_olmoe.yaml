@@ -1,0 +1,46 @@
+### model
+model_name_or_path: allenai/OLMoE-1B-7B-0924
+trust_remote_code: true
+use_reentrant_gc: false   # reentrant GC + DDP(find_unused_parameters=true) 会让同一参数被 mark ready 两次
+
+### method (Baseline: 每层 64 个 LoRA expert × rank=2，路由直接复用 OLMoE 原 router)
+# 用作对照组：测试"我们学习的 routing 是否比 OLMoE 自带 routing 更好"。
+# 参数量和 v2 对齐：16 × 64 × 2(A,B) × 2(rank) × 2048(d_model) ≈ 8.4M
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 64                  # 必须等于 OLMoE 的 num_experts (64)
+moe_lora_rank: 2                        # 对齐 v2 的 ~8.4M 可训练参数
+moe_lora_alpha: 4                       # alpha = 2 × rank
+moe_lora_top_k: 8                       # 等于 OLMoE 的 num_experts_per_tok
+moe_lora_pool_share: per_layer          # 每层独立池：每个原 expert 在每层有自己的 LoRA
+moe_lora_w_share: per_layer             # follow_moe 模式下会被忽略（不创建 W）
+moe_lora_routing_mode: follow_moe       # ⭐ 跳过 RoutingProjection，直接用 OLMoE router 的 top_k
+moe_lora_target_layers: all
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/olmoe/moe_lora/vbase_follow_moe
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: vbase_follow_moe
+
+### train
+per_device_train_batch_size: 32
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_find_unused_parameters: true   # top-k 路由会跳过未选中的 expert，DDP 默认会因为这些 unused param 报错

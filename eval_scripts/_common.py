@@ -35,13 +35,28 @@ def load(args) -> Tuple[AutoTokenizer, AutoModelForCausalLM]:
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+    # decoder-only 模型 batch generate 必须 left-padding，否则模型会从 PAD 之后续写，输出全废
+    tokenizer.padding_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base_model,
-        torch_dtype=dtype,
-        device_map="auto",
-        trust_remote_code=True,
-    )
+    # 多卡 (torchrun)：每个 rank 加载一份模型到自己的 GPU，避免 device_map="auto"
+    # 把 shared moe_lora 模块和不同 layer 分到不同卡上引发跨设备调用。
+    # 单卡：用 device_map="auto" 让 transformers 自己处理。
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if world_size > 1:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.base_model,
+            torch_dtype=dtype,
+            trust_remote_code=True,
+        )
+        model.to(f"cuda:{local_rank}")
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.base_model,
+            torch_dtype=dtype,
+            device_map="auto",
+            trust_remote_code=True,
+        )
     if args.adapter_path:
         print(f"Loading MoE-LoRA adapter from {args.adapter_path}")
         model = load_moe_lora_state(model, args.adapter_path)
