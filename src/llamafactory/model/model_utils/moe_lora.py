@@ -68,9 +68,9 @@ class RoutingProjection(nn.Module):
     def __init__(self, n_experts: int, n_lora: int):
         super().__init__()
         self.proj = nn.Linear(n_experts, n_lora, bias=False)
-        # 监控用 buffer（不算参数，不参与 state_dict 保存）
+        # 监控用 buffer（long 类型不会被 .to(dtype=bfloat16) 转换）
         self.register_buffer("entropy_sum", torch.zeros(1), persistent=False)
-        self.register_buffer("entropy_count", torch.zeros(1), persistent=False)
+        self.register_buffer("entropy_count", torch.zeros(1, dtype=torch.long), persistent=False)
 
     def forward(self, router_logits: torch.Tensor) -> torch.Tensor:
         p_L = torch.softmax(self.proj(router_logits), dim=-1)
@@ -123,9 +123,9 @@ class LoRAPool(nn.Module):
         self.experts = nn.ModuleList(
             [LoRAExpert(d_model, rank, alpha) for _ in range(n_experts)]
         )
-        # 监控用 buffer
-        self.register_buffer("activation_count", torch.zeros(n_experts), persistent=False)
-        self.register_buffer("total_tokens", torch.zeros(1), persistent=False)
+        # 监控用 buffer（long 类型不会被 .to(dtype=bfloat16) 转换，避免精度丢失）
+        self.register_buffer("activation_count", torch.zeros(n_experts, dtype=torch.long), persistent=False)
+        self.register_buffer("total_tokens", torch.zeros(1, dtype=torch.long), persistent=False)
 
     def forward(self, h: torch.Tensor, p_L: torch.Tensor) -> torch.Tensor:
         # 对齐 dtype：p_L 在 autocast 下的 softmax 会被升到 float32，但 h / out / lora
@@ -136,9 +136,7 @@ class LoRAPool(nn.Module):
 
         with torch.no_grad():
             flat_idx = topk_idx.reshape(-1)
-            ones = torch.ones_like(flat_idx, dtype=self.activation_count.dtype)
-            self.activation_count.scatter_add_(0, flat_idx, ones)
-            # token 数 = h 的所有 leading dim 乘积
+            self.activation_count.scatter_add_(0, flat_idx, torch.ones_like(flat_idx))
             n_tokens = 1
             for s in h.shape[:-1]:
                 n_tokens *= s
@@ -543,7 +541,7 @@ class MoELoRAStatsCallback(TrainerCallback):
         for name, pool in pools:
             if pool.total_tokens.item() == 0:
                 continue
-            freq = pool.activation_count / pool.total_tokens
+            freq = pool.activation_count.float() / pool.total_tokens.float()
             ideal = pool.top_k / pool.n_experts
             logs[f"moe_lora/{name}/activation_max"] = freq.max().item()
             logs[f"moe_lora/{name}/activation_min"] = freq.min().item()

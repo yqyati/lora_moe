@@ -7,10 +7,9 @@ use_reentrant_gc: false   # reentrant GC + DDP(find_unused_parameters=true) ä¼šè
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 256
-moe_lora_rank: 8
-moe_lora_alpha: 16
-moe_lora_top_k: 8
+moe_lora_n_experts: 128
+moe_lora_rank: 16
+moe_lora_alpha: 2
 moe_lora_pool_share: global
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
@@ -23,7 +22,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/olmoe/moe_lora/v2_global_pool256
+output_dir: saves/olmoe/moe_lora/v2_global_unlinear
 logging_steps: 5
 save_steps: 500
 plot_loss: true
