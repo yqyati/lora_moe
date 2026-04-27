@@ -126,21 +126,39 @@ class LoRAPool(nn.Module):
         # 监控用 buffer（long 类型不会被 .to(dtype=bfloat16) 转换，避免精度丢失）
         self.register_buffer("activation_count", torch.zeros(n_experts, dtype=torch.long), persistent=False)
         self.register_buffer("total_tokens", torch.zeros(1, dtype=torch.long), persistent=False)
+        # 全生命周期累计（不被 on_log 清零，用于训练后剪枝 dead experts）
+        self.register_buffer("lifetime_activation_count", torch.zeros(n_experts, dtype=torch.long), persistent=False)
 
     def forward(self, h: torch.Tensor, p_L: torch.Tensor) -> torch.Tensor:
         # 对齐 dtype：p_L 在 autocast 下的 softmax 会被升到 float32，但 h / out / lora
         # expert 输出都是 bfloat16，下游 out[active] = ... 要求 dtype 一致，否则报
         # "Index put requires the source and destination dtypes match"。
+        p_L_orig = p_L
         p_L = p_L.to(h.dtype)
         topk_vals, topk_idx = p_L.topk(self.top_k, dim=-1)  # [..., k]
 
         with torch.no_grad():
             flat_idx = topk_idx.reshape(-1)
-            self.activation_count.scatter_add_(0, flat_idx, torch.ones_like(flat_idx))
+            ones = torch.ones_like(flat_idx)
+            self.activation_count.scatter_add_(0, flat_idx, ones)
+            self.lifetime_activation_count.scatter_add_(0, flat_idx, ones)
             n_tokens = 1
             for s in h.shape[:-1]:
                 n_tokens *= s
             self.total_tokens += n_tokens
+
+        # load balancing loss: L = N * Σ(f_i * p_i)
+        if self.training:
+            n_tokens_f = float(h.shape[0]) if h.dim() == 2 else float(h.shape[0] * h.shape[1])
+            # f_i: expert i 被 top-k 选中的 token 比例（不可导）
+            one_hot = torch.zeros(int(n_tokens_f), self.n_experts, device=h.device, dtype=p_L_orig.dtype)
+            one_hot.scatter_(1, topk_idx.reshape(int(n_tokens_f), self.top_k), 1.0)
+            f = one_hot.mean(dim=0)
+            # p_i: expert i 的平均路由概率（可导，梯度从这里流）
+            p = p_L_orig.reshape(int(n_tokens_f), -1).mean(dim=0)
+            self._aux_loss = self.n_experts * (f * p).sum()
+        else:
+            self._aux_loss = None
 
         out = torch.zeros_like(h)
         # 对每个 expert，找出在 top-k 中选中它的位置，加权累加
@@ -395,6 +413,28 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         "Likely a bug in inject_moe_lora or freeze step."
     )
 
+    # 6. 注册 balance loss hook（coef > 0 时生效，线性衰减到 0）
+    balance_coef = getattr(finetuning_args, "moe_lora_balance_loss_coef", 0.0)
+    if balance_coef > 0:
+        model._balance_loss_state = {"step": 0, "total_steps": 1}
+
+        def _add_balance_loss_hook(module, input, output):
+            if not module.training or not hasattr(output, "loss") or output.loss is None:
+                return output
+            aux = torch.zeros(1, device=output.loss.device, dtype=output.loss.dtype)
+            for m in module.modules():
+                if isinstance(m, LoRAPool) and getattr(m, "_aux_loss", None) is not None:
+                    aux = aux + m._aux_loss.to(aux.dtype)
+                    m._aux_loss = None
+            state = module._balance_loss_state
+            progress = state["step"] / max(state["total_steps"], 1)
+            effective_coef = balance_coef * (1.0 - progress)
+            output.loss = output.loss + effective_coef * aux
+            return output
+
+        model.register_forward_hook(_add_balance_loss_hook)
+        logger.info_rank0(f"MoE-LoRA balance loss enabled (coef={balance_coef}, linear decay)")
+
 
 # ---------------------------------------------------------------------------
 # 保存 / 加载
@@ -435,7 +475,8 @@ def save_moe_lora_state(
         "moe_lora_w_share": finetuning_args.moe_lora_w_share,
         "moe_lora_target_layers": finetuning_args.moe_lora_target_layers,
         "moe_lora_detach_p_e": finetuning_args.moe_lora_detach_p_e,
-        "moe_lora_routing_mode": getattr(finetuning_args, "moe_lora_routing_mode", "learned"), 
+        "moe_lora_routing_mode": getattr(finetuning_args, "moe_lora_routing_mode", "learned"),
+        "moe_lora_balance_loss_coef": getattr(finetuning_args, "moe_lora_balance_loss_coef", 0.0),
         # 元信息（不属于 finetuning_args，加载时要 pop 掉）
         "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
     }
@@ -445,6 +486,27 @@ def save_moe_lora_state(
     logger.info_rank0(
         f"Saved MoE-LoRA state ({len(state)} tensors) to {save_dir}"
     )
+
+    # 3. 保存全生命周期激活统计（用于训练后剪枝）
+    pools = [(n, m) for n, m in model.named_modules() if isinstance(m, LoRAPool)]
+    if pools:
+        lifetime_stats = {}
+        for name, pool in pools:
+            counts = pool.lifetime_activation_count.cpu().tolist()
+            dead = [i for i, c in enumerate(counts) if c == 0]
+            lifetime_stats[name] = {
+                "activation_count": counts,
+                "dead_expert_indices": dead,
+                "n_dead": len(dead),
+                "n_total": len(counts),
+            }
+        with open(os.path.join(save_dir, "moe_lora_lifetime_stats.json"), "w") as f:
+            json.dump(lifetime_stats, f, indent=2)
+        total_dead = sum(s["n_dead"] for s in lifetime_stats.values())
+        total_experts = sum(s["n_total"] for s in lifetime_stats.values())
+        logger.info_rank0(
+            f"Lifetime dead experts: {total_dead}/{total_experts}"
+        )
 
 
 def load_moe_lora_state(model: "PreTrainedModel", load_dir: str) -> "PreTrainedModel":
@@ -498,6 +560,15 @@ def load_moe_lora_state(model: "PreTrainedModel", load_dir: str) -> "PreTrainedM
 # ---------------------------------------------------------------------------
 
 
+class MoELoRABalanceDecayCallback(TrainerCallback):
+    """同步训练进度到 model._balance_loss_state，供 balance loss hook 做线性衰减。"""
+
+    def on_step_begin(self, args, state, control, model: Optional[nn.Module] = None, **kwargs):
+        if model is not None and hasattr(model, "_balance_loss_state"):
+            model._balance_loss_state["step"] = state.global_step
+            model._balance_loss_state["total_steps"] = state.max_steps
+
+
 class MoELoRASaveCallback(TrainerCallback):
     """每次 trainer 触发 checkpoint 保存时，同步保存 MoE-LoRA 自定义状态。
 
@@ -547,6 +618,18 @@ class MoELoRAStatsCallback(TrainerCallback):
             logs[f"moe_lora/{name}/activation_min"] = freq.min().item()
             logs[f"moe_lora/{name}/dead_experts"] = (freq < 1e-4).sum().item()
             logs[f"moe_lora/{name}/activation_imbalance"] = (freq.max() / (ideal + 1e-8)).item()
+            # wandb histogram：每个 expert 的激活频率分布
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log({
+                        f"moe_lora/{name}/activation_freq": wandb.Histogram(freq.cpu().numpy()),
+                        f"moe_lora/{name}/lifetime_activation": wandb.Histogram(
+                            pool.lifetime_activation_count.float().cpu().numpy()
+                        ),
+                    }, commit=False)
+            except ImportError:
+                pass
             pool.activation_count.zero_()
             pool.total_tokens.zero_()
 
@@ -571,3 +654,11 @@ class MoELoRAStatsCallback(TrainerCallback):
             proj.entropy_count.zero_()
         if entropies:
             logs["moe_lora/p_L_entropy_avg"] = sum(entropies) / len(entropies)
+
+        # ④ balance loss（读取最近一次 forward 的值）
+        aux_losses = []
+        for name, pool in pools:
+            if getattr(pool, "_aux_loss", None) is not None:
+                aux_losses.append(pool._aux_loss.item())
+        if aux_losses:
+            logs["moe_lora/balance_loss"] = sum(aux_losses) / len(aux_losses)

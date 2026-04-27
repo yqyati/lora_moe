@@ -9,11 +9,12 @@ do_train: true
 finetuning_type: moe_lora
 moe_lora_n_experts: 128
 moe_lora_rank: 16
-moe_lora_alpha: 2
+moe_lora_alpha: 32
+moe_lora_top_k: 4
 moe_lora_pool_share: global
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
-
+moe_lora_balance_loss_coef: 0.0001
 ### dataset
 dataset: metamathqa_r1
 template: default

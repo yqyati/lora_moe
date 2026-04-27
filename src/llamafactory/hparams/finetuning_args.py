@@ -515,6 +515,13 @@ class FinetuningArguments(
             "'all' / 'first_half' / 'last_half' / 'last_third' / explicit '0,5,10,15'."
         },
     )
+    moe_lora_balance_loss_coef: float = field(
+        default=0.0,
+        metadata={
+            "help": "MoE-LoRA: load balancing auxiliary loss coefficient. "
+            "0 = disabled. Suggested starting value: 0.001."
+        },
+    )
     use_llama_pro: bool = field(
         default=False,
         metadata={"help": "Whether or not to make only the parameters in the expanded blocks trainable."},
