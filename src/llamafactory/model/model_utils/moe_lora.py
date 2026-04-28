@@ -584,6 +584,12 @@ class MoELoRASaveCallback(TrainerCallback):
             return
         ckpt_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
         save_moe_lora_state(model, ckpt_dir, self.finetuning_args)
+        # 删除 Trainer 自动保存的完整基座模型，只保留 LoRA 状态
+        import glob
+        for pattern in ("model.safetensors", "model-*.safetensors", "model.safetensors.index.json"):
+            for f in glob.glob(os.path.join(ckpt_dir, pattern)):
+                os.remove(f)
+                logger.info_rank0(f"Removed redundant base model file: {f}")
 
 
 class MoELoRAStatsCallback(TrainerCallback):
