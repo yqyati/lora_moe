@@ -499,13 +499,15 @@ class FinetuningArguments(
             "No effect when MoE backbone is fully frozen; reserved for future stage-1 router tuning."
         },
     )
-    moe_lora_routing_mode: Literal["learned", "follow_moe"] = field(
+    moe_lora_routing_mode: Literal["learned", "follow_moe", "independent"] = field(
         default="learned",
         metadata={
             "help": "MoE-LoRA: routing source. 'learned' (default) uses RoutingProjection W to "
             "project router_logits to N_L LoRA experts. 'follow_moe' (control baseline) skips "
             "RoutingProjection and reuses original MoE router's top_k_index/top_k_weights "
-            "directly; pool size and top_k must match original MoE's n_experts and top_k."
+            "directly; pool size and top_k must match original MoE's n_experts and top_k. "
+            "'independent' (baseline2 / LoRAMoE-style) uses an independent router that takes "
+            "hidden_states as input, completely decoupled from MoE routing."
         },
     )
     moe_lora_target_layers: str = field(

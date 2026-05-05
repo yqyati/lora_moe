@@ -81,6 +81,29 @@ class RoutingProjection(nn.Module):
         return p_L
 
 
+class IndependentRouter(nn.Module):
+    """独立 router (Baseline2 / LoRAMoE-style).
+
+    直接从 hidden_states 学路由，不依赖 MoE 的 router_logits。
+    输入: h in R^{..., d_model}
+    输出: p_L in R^{..., n_lora} (softmax 概率)
+    """
+
+    def __init__(self, d_model: int, n_lora: int):
+        super().__init__()
+        self.gate = nn.Linear(d_model, n_lora, bias=False)
+        self.register_buffer("entropy_sum", torch.zeros(1), persistent=False)
+        self.register_buffer("entropy_count", torch.zeros(1, dtype=torch.long), persistent=False)
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        p_L = torch.softmax(self.gate(h), dim=-1)
+        with torch.no_grad():
+            ent = -(p_L * torch.log(p_L + 1e-8)).sum(dim=-1).mean()
+            self.entropy_sum += ent.detach()
+            self.entropy_count += 1
+        return p_L
+
+
 class LoRAExpert(nn.Module):
     """单个 LoRA adapter
     A: d -> r（Kaiming 初始化）, B: r -> d（零初始化）
@@ -229,6 +252,8 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
         h_flat = hidden_states.reshape(-1, d)
         if routing_mode == "follow_moe":
             p_L = _follow_moe_p_L(self, h_flat, logits_for_lora)
+        elif routing_mode == "independent":
+            p_L = self.independent_router(h_flat)
         else:
             p_L = self.routing_projection(logits_for_lora)     # [B*T, N_L]
         lora_output = self.lora_pool(h_flat, p_L)              # [B*T, D]
@@ -236,6 +261,8 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
     else:
         if routing_mode == "follow_moe":
             p_L = _follow_moe_p_L(self, hidden_states, logits_for_lora)
+        elif routing_mode == "independent":
+            p_L = self.independent_router(hidden_states)
         else:
             p_L = self.routing_projection(logits_for_lora)
         lora_output = self.lora_pool(hidden_states, p_L)
@@ -361,27 +388,32 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     # 2. 全局共享时在 model 顶层挂一份
     shared_pool = None
     shared_proj = None
+    shared_indep_router = None
     if pool_share == "global":
         shared_pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
         model.add_module("global_lora_pool", shared_pool)
     if w_share == "global" and routing_mode == "learned":
         shared_proj = RoutingProjection(n_experts_moe, n_lora).to(device=device, dtype=dtype)
         model.add_module("global_routing_projection", shared_proj)
+    if w_share == "global" and routing_mode == "independent":
+        shared_indep_router = IndependentRouter(d_model, n_lora).to(device=device, dtype=dtype)
+        model.add_module("global_independent_router", shared_indep_router)
 
     # 3. 给每个 MoE block 挂模块 + monkey-patch forward
     for moe_block in moe_blocks:
-        # RoutingProjection（follow_moe 模式下不创建任何 W）
+        # RoutingProjection / IndependentRouter（follow_moe 模式下不创建任何 router）
         if routing_mode == "learned":
             if w_share == "per_layer":
                 proj = RoutingProjection(n_experts_moe, n_lora).to(device=device, dtype=dtype)
                 moe_block.routing_projection = proj
             else:
-                # 全局共享时用 object.__setattr__ 绕过 nn.Module 的子模块自动注册：
-                # 否则同一个 shared_proj 会同时挂在 model.global_routing_projection 和
-                # 16 个 model.layers.X.mlp.routing_projection 下，state_dict 出现 17 份
-                # 重复 key，HuggingFace save_pretrained 会因 shared tensors 报错。
-                # shared_proj 已通过 add_module 注册到 model 顶层，参数仍被 optimizer 看到。
                 object.__setattr__(moe_block, "routing_projection", shared_proj)
+        elif routing_mode == "independent":
+            if w_share == "per_layer":
+                indep_router = IndependentRouter(d_model, n_lora).to(device=device, dtype=dtype)
+                moe_block.independent_router = indep_router
+            else:
+                object.__setattr__(moe_block, "independent_router", shared_indep_router)
 
         # LoRAPool
         if pool_share == "per_layer":
@@ -398,7 +430,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
 
     # 4. 重置 requires_grad（base model 全 freeze，注入的模块全 trainable）
     for name, p in model.named_parameters():
-        if "routing_projection" in name or "lora_pool" in name:
+        if "routing_projection" in name or "lora_pool" in name or "independent_router" in name:
             p.requires_grad = True
         else:
             p.requires_grad = False
@@ -537,7 +569,7 @@ def load_moe_lora_state(model: "PreTrainedModel", load_dir: str) -> "PreTrainedM
 
     # 5. 双向校验（防 silent fail）
     assert len(unexpected) == 0, f"Unexpected weights in checkpoint: {unexpected[:5]}"
-    unloaded_lora = [n for n in missing if "routing_projection" in n or "lora_pool" in n]
+    unloaded_lora = [n for n in missing if "routing_projection" in n or "lora_pool" in n or "independent_router" in n]
     assert not unloaded_lora, (
         f"Failed to load LoRA params (naming mismatch?): {unloaded_lora[:5]}"
     )
@@ -613,6 +645,7 @@ class MoELoRAStatsCallback(TrainerCallback):
 
         pools = [(n, m) for n, m in model.named_modules() if isinstance(m, LoRAPool)]
         projs = [(n, m) for n, m in model.named_modules() if isinstance(m, RoutingProjection)]
+        indep_routers = [(n, m) for n, m in model.named_modules() if isinstance(m, IndependentRouter)]
 
         # ① 激活频率
         for name, pool in pools:
@@ -648,7 +681,7 @@ class MoELoRAStatsCallback(TrainerCallback):
         if w_norms:
             logs["moe_lora/W_fro_norm_avg"] = sum(w_norms) / len(w_norms)
 
-        # ③ p_L entropy（直接读 RoutingProjection 内置 buffer）
+        # ③ p_L entropy（直接读 RoutingProjection / IndependentRouter 内置 buffer）
         entropies = []
         for name, proj in projs:
             if proj.entropy_count.item() == 0:
@@ -658,6 +691,14 @@ class MoELoRAStatsCallback(TrainerCallback):
             entropies.append(avg_ent)
             proj.entropy_sum.zero_()
             proj.entropy_count.zero_()
+        for name, router in indep_routers:
+            if router.entropy_count.item() == 0:
+                continue
+            avg_ent = (router.entropy_sum / router.entropy_count).item()
+            logs[f"moe_lora/{name}/p_L_entropy"] = avg_ent
+            entropies.append(avg_ent)
+            router.entropy_sum.zero_()
+            router.entropy_count.zero_()
         if entropies:
             logs["moe_lora/p_L_entropy_avg"] = sum(entropies) / len(entropies)
 

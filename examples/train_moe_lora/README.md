@@ -13,6 +13,8 @@ p_L = softmax(W · router_logits),   W: N_E -> N_L
 ## 快速开始（V1 + OLMoE-1B-7B + GSM8K）
 
 ```bash
+export HF_ENDPOINT=https://hf-mirror.com 
+
 # 1. 数据预处理：下载 oumi-ai/MetaMathQA-R1, 删 <think>...</think>
 python data/preprocess_metamathqa_r1.py --limit 1000   # 先小规模 smoke test
 python data/preprocess_metamathqa_r1.py                 # 全量 ~395K
@@ -32,9 +34,11 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --batch_size 64 \
     --max_new_tokens 512
 
+
+
 torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/v1_per_layer \
+    --adapter_path saves/olmoe/moe_lora/baseline2_independent \
     --batch_size 64 \
     --max_new_tokens 512
 
