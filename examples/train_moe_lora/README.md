@@ -38,7 +38,7 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
 
 torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/baseline2_independent \
+    --adapter_path saves/olmoe/moe_lora/baseline2_independent/checkpoint-1000 \
     --batch_size 64 \
     --max_new_tokens 512
 

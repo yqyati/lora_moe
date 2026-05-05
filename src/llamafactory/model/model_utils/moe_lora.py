@@ -143,9 +143,12 @@ class LoRAPool(nn.Module):
         super().__init__()
         self.n_experts = n_experts
         self.top_k = top_k
+        self.rank = rank
+        self.scaling = alpha / rank
         self.experts = nn.ModuleList(
             [LoRAExpert(d_model, rank, alpha) for _ in range(n_experts)]
         )
+        self._use_grouped_mm = hasattr(torch.nn.functional, "grouped_mm")
         # 监控用 buffer（long 类型不会被 .to(dtype=bfloat16) 转换，避免精度丢失）
         self.register_buffer("activation_count", torch.zeros(n_experts, dtype=torch.long), persistent=False)
         self.register_buffer("total_tokens", torch.zeros(1, dtype=torch.long), persistent=False)
@@ -153,9 +156,6 @@ class LoRAPool(nn.Module):
         self.register_buffer("lifetime_activation_count", torch.zeros(n_experts, dtype=torch.long), persistent=False)
 
     def forward(self, h: torch.Tensor, p_L: torch.Tensor) -> torch.Tensor:
-        # 对齐 dtype：p_L 在 autocast 下的 softmax 会被升到 float32，但 h / out / lora
-        # expert 输出都是 bfloat16，下游 out[active] = ... 要求 dtype 一致，否则报
-        # "Index put requires the source and destination dtypes match"。
         p_L_orig = p_L
         p_L = p_L.to(h.dtype)
         topk_vals, topk_idx = p_L.topk(self.top_k, dim=-1)  # [..., k]
@@ -173,33 +173,79 @@ class LoRAPool(nn.Module):
         # load balancing loss: L = N * Σ(f_i * p_i)
         if self.training:
             n_tokens_f = float(h.shape[0]) if h.dim() == 2 else float(h.shape[0] * h.shape[1])
-            # f_i: expert i 被 top-k 选中的 token 比例（不可导）
             one_hot = torch.zeros(int(n_tokens_f), self.n_experts, device=h.device, dtype=p_L_orig.dtype)
             one_hot.scatter_(1, topk_idx.reshape(int(n_tokens_f), self.top_k), 1.0)
             f = one_hot.mean(dim=0)
-            # p_i: expert i 的平均路由概率（可导，梯度从这里流）
             p = p_L_orig.reshape(int(n_tokens_f), -1).mean(dim=0)
             self._aux_loss = self.n_experts * (f * p).sum()
         else:
             self._aux_loss = None
 
+        if self._use_grouped_mm:
+            return self._forward_grouped_mm(h, topk_vals, topk_idx)
+        else:
+            return self._forward_loop(h, topk_vals, topk_idx)
+
+    def _forward_grouped_mm(self, h: torch.Tensor, topk_vals: torch.Tensor, topk_idx: torch.Tensor) -> torch.Tensor:
+        """使用 torch.nn.functional.grouped_mm 的高效实现。"""
+        orig_shape = h.shape
+        d = h.shape[-1]
+        h_flat = h.reshape(-1, d)  # [N, d]
+        N = h_flat.shape[0]
+        k = self.top_k
+
+        # 展开: 每个 token 复制 k 份，对应 k 个选中的 expert
+        h_expanded = h_flat.unsqueeze(1).expand(N, k, d).reshape(N * k, d)  # [N*k, d]
+        expert_ids = topk_idx.reshape(N * k)  # [N*k]
+        weights = topk_vals.reshape(N * k)  # [N*k]
+
+        # 按 expert_id 排序，grouped_mm 要求同组 token 连续
+        sorted_order = expert_ids.argsort(stable=True)
+        h_sorted = h_expanded[sorted_order]  # [N*k, d]
+        expert_ids_sorted = expert_ids[sorted_order]
+        weights_sorted = weights[sorted_order]  # [N*k]
+
+        # 计算每个 expert 的 token 数量 -> cumulative offsets
+        counts = torch.zeros(self.n_experts, dtype=torch.int32, device=h.device)
+        counts.scatter_add_(0, expert_ids_sorted.to(torch.int64), torch.ones(N * k, dtype=torch.int32, device=h.device))
+        offs = counts.cumsum(0).to(torch.int32)  # [n_experts]
+
+        # 堆叠所有 expert 的权重
+        A_weight = torch.stack([e.A.weight for e in self.experts])  # [n_experts, rank, d]
+        B_weight = torch.stack([e.B.weight for e in self.experts])  # [n_experts, d, rank]
+
+        # grouped_mm: h_sorted @ A^T -> [N*k, rank]
+        compute_dtype = h_sorted.dtype
+        intermediate = torch.nn.functional.grouped_mm(
+            h_sorted.to(A_weight.dtype), A_weight.transpose(-2, -1), offs=offs
+        )
+        # grouped_mm: intermediate @ B^T -> [N*k, d]
+        output_sorted = torch.nn.functional.grouped_mm(
+            intermediate, B_weight.transpose(-2, -1), offs=offs
+        )
+
+        # 应用 scaling 和 routing weight
+        output_sorted = (self.scaling * weights_sorted.unsqueeze(-1)) * output_sorted
+
+        # 反排序 + 聚合 k 个 expert 的输出
+        output_expanded = torch.zeros(N * k, d, device=h.device, dtype=output_sorted.dtype)
+        output_expanded[sorted_order] = output_sorted
+        out = output_expanded.reshape(N, k, d).sum(dim=1)  # [N, d]
+
+        return out.to(compute_dtype).reshape(orig_shape)
+
+    def _forward_loop(self, h: torch.Tensor, topk_vals: torch.Tensor, topk_idx: torch.Tensor) -> torch.Tensor:
+        """Fallback: 逐 expert for 循环（兼容旧版 PyTorch）。"""
         out = torch.zeros_like(h)
-        # 对每个 expert，找出在 top-k 中选中它的位置，加权累加
         for i in range(self.n_experts):
-            # mask: [..., k]，标记该 expert 在 top-k 第几位
             expert_mask = topk_idx == i
             if not expert_mask.any():
                 continue
-            # 对每个 token，计算该 expert 的总权重（如果在多个 top-k 位置都被选中）
-            weight = (topk_vals * expert_mask).sum(dim=-1, keepdim=True)  # [..., 1]
-            active = (weight.squeeze(-1) > 0)  # [...]
+            weight = (topk_vals * expert_mask).sum(dim=-1, keepdim=True)
+            active = (weight.squeeze(-1) > 0)
             if not active.any():
                 continue
-            # 只对该 expert 被激活的 token 跑 forward
-            out_i = self.experts[i](h[active])  # [N_active, d_model]
-            # 强制对齐到 out.dtype：trainer 的混合精度策略可能把 trainable 参数（含
-            # LoRA expert）保留在 float32，输出也是 float32；而 out 是 bfloat16，
-            # in-place index_put 要求两边 dtype 完全一致，这里兜底一下。
+            out_i = self.experts[i](h[active])
             update = (weight[active] * out_i).to(out.dtype)
             out[active] = out[active] + update
         return out
