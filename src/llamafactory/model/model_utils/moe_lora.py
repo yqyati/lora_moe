@@ -214,14 +214,23 @@ class LoRAPool(nn.Module):
         A_weight = torch.stack([e.A.weight for e in self.experts])  # [n_experts, rank, d]
         B_weight = torch.stack([e.B.weight for e in self.experts])  # [n_experts, d, rank]
 
-        # grouped_mm: h_sorted @ A^T -> [N*k, rank]
+        # grouped_mm 要求 stride 是 16 字节对齐；rank 较小时需要 pad
+        elem_size = A_weight.element_size()  # 2 for bf16/fp16
+        align_n = 16 // elem_size  # elements per 16B boundary
+        padded_rank = (self.rank + align_n - 1) // align_n * align_n
+        if padded_rank != self.rank:
+            pad_n = padded_rank - self.rank
+            A_weight = F.pad(A_weight, (0, 0, 0, pad_n))         # [n_experts, padded_rank, d]
+            B_weight = F.pad(B_weight, (0, pad_n))               # [n_experts, d, padded_rank]
+
+        # grouped_mm: h_sorted @ A^T -> [N*k, padded_rank]
         compute_dtype = h_sorted.dtype
         intermediate = torch.nn.functional.grouped_mm(
-            h_sorted.to(A_weight.dtype), A_weight.transpose(-2, -1), offs=offs
+            h_sorted.to(A_weight.dtype), A_weight.transpose(-2, -1).contiguous(), offs=offs
         )
         # grouped_mm: intermediate @ B^T -> [N*k, d]
         output_sorted = torch.nn.functional.grouped_mm(
-            intermediate, B_weight.transpose(-2, -1), offs=offs
+            intermediate, B_weight.transpose(-2, -1).contiguous(), offs=offs
         )
 
         # 应用 scaling 和 routing weight
