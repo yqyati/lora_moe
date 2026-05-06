@@ -3,39 +3,39 @@ model_name_or_path: allenai/OLMoE-1B-7B-0924
 trust_remote_code: true
 use_reentrant_gc: false
 
-### method
+### method (V2: 全局共享池 128 + W_l 每层独立)
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 16
+moe_lora_n_experts: 256
 moe_lora_rank: 8
 moe_lora_alpha: 16
-moe_lora_top_k: 2
-moe_lora_pool_share: per_layer
+moe_lora_top_k: 4
+moe_lora_pool_share: global
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
-moe_lora_routing_mode: independent
+moe_lora_balance_loss_coef: 0.0001
 
 ### dataset
-dataset: metamathqa_r1
+dataset: magicoder_oss_75k
 template: default
 cutoff_len: 2048
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/olmoe/moe_lora/baseline2_independent
+output_dir: saves/olmoe/moe_lora_code/v2_global
 logging_steps: 5
-save_steps: 500
+save_steps: 400
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
 report_to: wandb
-run_name: baseline2_independent
+run_name: code_v2_global
 
 ### train
-per_device_train_batch_size: 16
-gradient_accumulation_steps: 4
+per_device_train_batch_size: 32
+gradient_accumulation_steps: 2
 learning_rate: 4.0e-4
 num_train_epochs: 2.0
 lr_scheduler_type: cosine

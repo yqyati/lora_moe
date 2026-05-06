@@ -19,6 +19,10 @@ export HF_ENDPOINT=https://hf-mirror.com
 python data/preprocess_metamathqa_r1.py --limit 1000   # 先小规模 smoke test
 python data/preprocess_metamathqa_r1.py                 # 全量 ~395K
 
+# 1b. 代码数据预处理：下载 ise-uiuc/Magicoder-OSS-Instruct-75K
+python data/preprocess_magicoder.py                     # 全量 ~75K
+python data/preprocess_magicoder.py --limit 1000        # 小规模 smoke test
+
 # 2. 训练 V1
 llamafactory-cli train examples/train_moe_lora/v1_olmoe.yaml
 
@@ -40,6 +44,27 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
     --adapter_path saves/olmoe/moe_lora/baseline2_independent_global \
     --batch_size 64 \
+    --max_new_tokens 512
+
+# 评估 MATH-500
+torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/baseline2_independent_global \
+    --batch_size 64 \
+    --max_new_tokens 512
+
+# 评估 MBPP（代码生成）
+torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora_code/v2_global \
+    --batch_size 32 \
+    --max_new_tokens 512
+
+# 评估 HumanEval（代码生成，需先 pip install human-eval）
+torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/vbase_follow_moe \
+    --batch_size 16 \
     --max_new_tokens 512
 
 # 4. 评估 MMLU（选择题，走 LlamaFactory 自带 eval）
@@ -104,19 +129,48 @@ MoE-LoRA setup complete | trainable: 4.20M (0.299%) | total: 1404.32M
 
 ## 评估脚本
 
-| 脚本 | benchmark | 评估方式 |
-|------|-----------|---------|
-| `eval_scripts/eval_gsm8k.py` | GSM8K | 生成 + `#### 数字` 抽取 |
-| `eval_scripts/eval_math500.py` | MATH-500 | 生成 + `\boxed{...}` 抽取 |
-| `eval_scripts/eval_humaneval.py` | HumanEval | 生成 + 执行 unit test（需 `pip install human-eval`）|
+| 脚本 | benchmark | 评估方式 | 多卡支持 |
+|------|-----------|---------|---------|
+| `eval_scripts/eval_gsm8k.py` | GSM8K | 生成 + `#### 数字` 抽取 | ✅ |
+| `eval_scripts/eval_math500.py` | MATH-500 | 生成 + `\boxed{...}` 抽取 | ✅ |
+| `eval_scripts/eval_mbpp.py` | MBPP | 生成 + 执行 assert 测试 | ✅ |
+| `eval_scripts/eval_humaneval.py` | HumanEval | 生成 + 执行 unit test（需 `pip install human-eval`）| ✅ |
 
 通用参数：
 ```bash
 --base_model PATH        # HF base model id
 --adapter_path PATH      # moe_lora checkpoint 目录（不传则评估 base）
 --batch_size N           # 生成 batch
+--max_new_tokens N       # 最大生成 token 数（默认 512）
 --limit N                # 只评估前 N 条（debug）
 --save_path FILE.jsonl   # 保存 per-sample prediction
+```
+
+单卡：
+```bash
+python eval_scripts/eval_gsm8k.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/baseline2_independent_global \
+    --batch_size 4
+```
+
+多卡加速（8 GPU 并行，数据自动切分到各 rank）：
+```bash
+torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/baseline2_independent \
+    --batch_size 64 --max_new_tokens 512
+
+torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/baseline2_independent_global \
+    --batch_size 64 --max_new_tokens 512
+
+# 评估 MBPP（代码生成）
+torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/v2_global_pool128_best \
+    --batch_size 32 --max_new_tokens 512
 ```
 
 ---
@@ -183,4 +237,4 @@ A: `inject_moe_lora` 的命名规则可能改了。检查 `moe_lora.py` 里 `rou
 A: MoE-LoRA 是独立分支（不是叠加在 linear 上的 LoRA），无法 merge。inference 时必须保留 LoRA pool + RoutingProjection。
 
 **Q: 评估生成很慢？**  
-A: `eval_scripts/*` 是单卡顺序生成，没接 vLLM。第二/三阶段大量评估时建议接 vLLM 或 sglang。
+A: 使用 `torchrun --nproc_per_node=8` 多卡并行 + 大 batch（如 64）可加速约 30-50 倍。更大规模评估建议接 vLLM 或 sglang。
