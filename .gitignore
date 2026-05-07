@@ -182,3 +182,4 @@ swanlog/
 generated_predictions.jsonl
 predictions_score.json
 data/metamathqa_r1_clean.json
+data/magicoder_oss_75k.json

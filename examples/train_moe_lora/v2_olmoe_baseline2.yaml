@@ -12,7 +12,7 @@ moe_lora_rank: 8
 moe_lora_alpha: 16
 moe_lora_top_k: 4
 moe_lora_pool_share: global
-moe_lora_w_share: global
+moe_lora_w_share: per_layer
 moe_lora_target_layers: all
 moe_lora_routing_mode: independent
 

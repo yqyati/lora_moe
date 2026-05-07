@@ -56,14 +56,14 @@ torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
 # 评估 MBPP（代码生成）
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora_code/v2_global \
+    --adapter_path saves/olmoe/moe_lora_code/v2_global_test  \
     --batch_size 32 \
     --max_new_tokens 512
 
 # 评估 HumanEval（代码生成，需先 pip install human-eval）
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/vbase_follow_moe \
+    --adapter_path saves/olmoe/moe_lora_code/v1_per_layer \
     --batch_size 16 \
     --max_new_tokens 512
 
@@ -169,7 +169,7 @@ torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
 # 评估 MBPP（代码生成）
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/v2_global_pool128_best \
+    --adapter_path saves/olmoe/moe_lora_code/baseline2_independent_global \
     --batch_size 32 --max_new_tokens 512
 ```
 

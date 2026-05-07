@@ -26,7 +26,7 @@ dataloader_num_workers: 4
 ### output
 output_dir: saves/olmoe/moe_lora_code/baseline2_independent
 logging_steps: 5
-save_steps: 500
+save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
@@ -35,7 +35,7 @@ run_name: code_baseline2_independent
 
 ### train
 per_device_train_batch_size: 8
-gradient_accumulation_steps: 8
+gradient_accumulation_steps: 2
 learning_rate: 4.0e-4
 num_train_epochs: 2.0
 lr_scheduler_type: cosine
