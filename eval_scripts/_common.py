@@ -67,20 +67,39 @@ def load(args) -> Tuple[AutoTokenizer, AutoModelForCausalLM]:
 
 
 @torch.inference_mode()
-def generate_batch(model, tokenizer, prompts, max_new_tokens):
-    """Batch 生成。返回纯 completion（不含 prompt）。"""
+def generate_batch(model, tokenizer, prompts, max_new_tokens, temperature=0.0, top_p=0.95):
+    """Batch 生成。返回纯 completion（不含 prompt）。
+
+    temperature=0.0 时用 greedy；>0 时用 sampling。
+    """
     enc = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=2048).to(model.device)
-    out = model.generate(
+    gen_kwargs = dict(
         **enc,
         max_new_tokens=max_new_tokens,
-        do_sample=False,
         pad_token_id=tokenizer.pad_token_id,
     )
+    if temperature > 0:
+        gen_kwargs.update(do_sample=True, temperature=temperature, top_p=top_p)
+    else:
+        gen_kwargs.update(do_sample=False)
+    out = model.generate(**gen_kwargs)
+    # left-padding 下,真正的生成部分从 padded 总长之后开始;
+    # 用"非 pad token 数"当起点会把 prompt 尾部泄露到 completion 里。
+    input_len = enc.input_ids.shape[1]
     completions = []
-    for i, ids in enumerate(out):
-        prompt_len = enc.input_ids[i].ne(tokenizer.pad_token_id).sum().item()
-        completions.append(tokenizer.decode(ids[prompt_len:], skip_special_tokens=True))
+    for ids in out:
+        completions.append(tokenizer.decode(ids[input_len:], skip_special_tokens=True))
     return completions
+
+
+def wrap_default_chat(tokenizer, user_content: str) -> str:
+    """对齐 LlamaFactory `template: default` 训练格式:
+        Human: {content}<EOS>
+        Assistant:
+    生成端不带 trailing EOS,模型从 'Assistant:' 后开始续写。
+    """
+    eos = tokenizer.eos_token or "<|endoftext|>"
+    return f"Human: {user_content}{eos}\nAssistant:"
 
 
 def extract_gsm8k_answer(text: str):

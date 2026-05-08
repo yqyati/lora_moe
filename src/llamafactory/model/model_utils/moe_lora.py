@@ -104,6 +104,30 @@ class IndependentRouter(nn.Module):
         return p_L
 
 
+class ResidualRouter(nn.Module):
+    """残差叠加路由：W1 @ router_logits + W2 @ h
+
+    结合 MoE routing 先验（64 维）和 hidden state 信息（2048 维）。
+    训练后通过 W1/W2 的 norm 比值可量化两路信号的相对贡献。
+    """
+
+    def __init__(self, n_experts: int, d_model: int, n_lora: int):
+        super().__init__()
+        self.proj_moe = nn.Linear(n_experts, n_lora, bias=False)
+        self.proj_h = nn.Linear(d_model, n_lora, bias=False)
+        self.register_buffer("entropy_sum", torch.zeros(1), persistent=False)
+        self.register_buffer("entropy_count", torch.zeros(1, dtype=torch.long), persistent=False)
+
+    def forward(self, router_logits: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
+        logits = self.proj_moe(router_logits) + self.proj_h(h)
+        p_L = torch.softmax(logits, dim=-1)
+        with torch.no_grad():
+            ent = -(p_L * torch.log(p_L + 1e-8)).sum(dim=-1).mean()
+            self.entropy_sum += ent.detach()
+            self.entropy_count += 1
+        return p_L
+
+
 class LoRAExpert(nn.Module):
     """单个 LoRA adapter
     A: d -> r（Kaiming 初始化）, B: r -> d（零初始化）
@@ -309,6 +333,8 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
             p_L = _follow_moe_p_L(self, h_flat, logits_for_lora)
         elif routing_mode == "independent":
             p_L = self.independent_router(h_flat)
+        elif routing_mode == "residual":
+            p_L = self.residual_router(logits_for_lora, h_flat)
         else:
             p_L = self.routing_projection(logits_for_lora)     # [B*T, N_L]
         lora_output = self.lora_pool(h_flat, p_L)              # [B*T, D]
@@ -318,6 +344,8 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
             p_L = _follow_moe_p_L(self, hidden_states, logits_for_lora)
         elif routing_mode == "independent":
             p_L = self.independent_router(hidden_states)
+        elif routing_mode == "residual":
+            p_L = self.residual_router(logits_for_lora, hidden_states)
         else:
             p_L = self.routing_projection(logits_for_lora)
         lora_output = self.lora_pool(hidden_states, p_L)
@@ -444,6 +472,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     shared_pool = None
     shared_proj = None
     shared_indep_router = None
+    shared_residual_router = None
     if pool_share == "global":
         shared_pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
         model.add_module("global_lora_pool", shared_pool)
@@ -453,6 +482,9 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     if w_share == "global" and routing_mode == "independent":
         shared_indep_router = IndependentRouter(d_model, n_lora).to(device=device, dtype=dtype)
         model.add_module("global_independent_router", shared_indep_router)
+    if w_share == "global" and routing_mode == "residual":
+        shared_residual_router = ResidualRouter(n_experts_moe, d_model, n_lora).to(device=device, dtype=dtype)
+        model.add_module("global_residual_router", shared_residual_router)
 
     # 3. 给每个 MoE block 挂模块 + monkey-patch forward
     for moe_block in moe_blocks:
@@ -469,6 +501,12 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
                 moe_block.independent_router = indep_router
             else:
                 object.__setattr__(moe_block, "independent_router", shared_indep_router)
+        elif routing_mode == "residual":
+            if w_share == "per_layer":
+                res_router = ResidualRouter(n_experts_moe, d_model, n_lora).to(device=device, dtype=dtype)
+                moe_block.residual_router = res_router
+            else:
+                object.__setattr__(moe_block, "residual_router", shared_residual_router)
 
         # LoRAPool
         if pool_share == "per_layer":

@@ -43,7 +43,7 @@ from _common import common_arg_parser, load
 
 # ─── 数据集加载与格式化 ────────────────────────────────────────────────────────
 
-BENCHMARKS = ["commonsenseqa", "arc_challenge", "strategyqa", "ceval", "mmlu"]
+BENCHMARKS = ["commonsenseqa", "arc_challenge", "strategyqa", "hellaswag", "winogrande", "ceval", "mmlu"]
 
 
 def load_commonsenseqa(limit=None):
@@ -179,10 +179,97 @@ def load_mmlu(limit=None):
     return samples
 
 
+def load_hellaswag(limit=None):
+    """HellaSwag: 4 选 1 句子补全（常识推理）"""
+    ds = load_dataset("Rowan/hellaswag", split="validation")
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+    samples = []
+    for item in ds:
+        ctx = item["ctx"]
+        endings = item["endings"]
+        gold_idx = int(item["label"])
+        labels = ["A", "B", "C", "D"]
+        options = [f"{l}. {t}" for l, t in zip(labels, endings)]
+        samples.append({
+            "question": ctx,
+            "options": options,
+            "labels": labels,
+            "choices_text": endings,
+            "gold": labels[gold_idx],
+        })
+    return samples
+
+
+def load_winogrande(limit=None):
+    """WinoGrande: 2 选 1 代词消歧"""
+    ds = load_dataset("allenai/winogrande", "winogrande_debiased", split="validation")
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+    samples = []
+    for item in ds:
+        sentence = item["sentence"]
+        option1 = item["option1"]
+        option2 = item["option2"]
+        gold = "A" if item["answer"] == "1" else "B"
+        labels = ["A", "B"]
+        options = [f"A. {option1}", f"B. {option2}"]
+        samples.append({
+            "question": sentence,
+            "options": options,
+            "labels": labels,
+            "choices_text": [option1, option2],
+            "gold": gold,
+        })
+    return samples
+
+
+def load_boolq(limit=None):
+    """BoolQ: 是非问答（True/False）"""
+    ds = load_dataset("google/boolq", split="validation")
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+    samples = []
+    for item in ds:
+        question = item["question"] + f"\nPassage: {item['passage']}"
+        gold = "A" if item["answer"] else "B"
+        samples.append({
+            "question": question,
+            "options": ["A. True", "B. False"],
+            "labels": ["A", "B"],
+            "choices_text": ["True", "False"],
+            "gold": gold,
+        })
+    return samples
+
+
+def load_piqa(limit=None):
+    """PIQA: 物理直觉 2 选 1"""
+    ds = load_dataset("piqa", split="validation", trust_remote_code=True)
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+    samples = []
+    for item in ds:
+        question = item["goal"]
+        sol1 = item["sol1"]
+        sol2 = item["sol2"]
+        gold = "A" if item["label"] == 0 else "B"
+        samples.append({
+            "question": question,
+            "options": [f"A. {sol1}", f"B. {sol2}"],
+            "labels": ["A", "B"],
+            "choices_text": [sol1, sol2],
+            "gold": gold,
+        })
+    return samples
+
+
 LOADER_MAP = {
     "commonsenseqa": load_commonsenseqa,
     "arc_challenge": load_arc_challenge,
     "strategyqa": load_strategyqa,
+    "hellaswag": load_hellaswag,
+    "winogrande": load_winogrande,
     "ceval": load_ceval,
     "mmlu": load_mmlu,
 }
@@ -374,6 +461,7 @@ def main():
             # 保存每个 benchmark 的详细结果
             if args.save_path:
                 bench_save = args.save_path.replace(".jsonl", f"_{bench_name}.jsonl")
+                os.makedirs(os.path.dirname(bench_save) or ".", exist_ok=True)
                 with open(bench_save, "w") as f:
                     for r in records:
                         f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -395,6 +483,7 @@ def main():
         # 保存汇总到 json
         if args.save_path:
             summary_path = args.save_path.replace(".jsonl", "_summary.json")
+            os.makedirs(os.path.dirname(summary_path) or ".", exist_ok=True)
             with open(summary_path, "w") as f:
                 results_summary["average"] = avg
                 json.dump(results_summary, f, indent=2, ensure_ascii=False)

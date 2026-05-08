@@ -52,11 +52,12 @@ torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
     --adapter_path saves/olmoe/moe_lora/baseline2_independent_global \
     --batch_size 64 \
     --max_new_tokens 512
+python3 -c "import json; rs=[json.loads(l) for l in open('/tmp/humaneval_debug.jsonl')]; from collections import Counter; print(Counter([r.get('exec_result','')[:60] for r in rs if not r['passed']]).most_common(10))"  
 
 # 评估 MBPP（代码生成）
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora_code/baseline2_independent \
+    --adapter_path saves/olmoe/moe_lora_code/v2_residual \
     --batch_size 32 \
     --max_new_tokens 512
 
@@ -64,8 +65,11 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
     --adapter_path saves/olmoe/moe_lora_code/baseline2_independent \
-    --batch_size 16 \
-    --max_new_tokens 512
+    --batch_size 64 \
+    --max_new_tokens 512\
+    --chat_mode \
+    --num_samples 3 --k 1 --temperature 0.2\
+    --save_path /tmp/humaneval_debug.jsonl 
 
 # 5. 路由分析：对比 V2 (projection) vs Baseline2 (independent) 的专家激活模式
 python eval_scripts/analyze_routing.py \
@@ -84,7 +88,7 @@ python eval_scripts/analyze_global_pool.py \
     --limit 200
 
 # 4. 评估 MMLU（选择题，走 LlamaFactory 自带 eval）
-llamafactory-cli eval \
+CUDA_VISIBLE_DEVICES=7 llamafactory-cli eval \
     --model_name_or_path allenai/OLMoE-1B-7B-0924 \
     --adapter_name_or_path saves/olmoe/moe_lora/v1_per_layer \
     --finetuning_type moe_lora \
@@ -205,10 +209,10 @@ torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
 # 评估领域微调后的通用能力
 torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/v2_global_unlinear_1 \
-    --benchmark all \
-    --batch_size 16 \
-    --save_path eval_results/v2_general.jsonl
+    --adapter_path saves/olmoe/moe_lora/vbase_follow_moe \
+    --benchmark PIQA \
+    --batch_size 512 \
+    --save_path eval_results/baseline2.jsonl
 
 # 只跑单个 benchmark（逗号分隔可选多个）
 python eval_scripts/eval_general.py \
