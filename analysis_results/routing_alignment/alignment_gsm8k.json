@@ -1,0 +1,289 @@
+{
+  "ours": {
+    "global": {
+      "avg_rsa": 0.31891600089147687,
+      "avg_conditional_entropy": 3.850161672852048,
+      "avg_f_statistic": 47.29245992353874,
+      "avg_normalized_mutual_info": 0.02116414646729872,
+      "n_layers_analyzed": 16
+    },
+    "per_layer": {
+      "0": {
+        "rsa": 0.5954177975654602,
+        "conditional_entropy": 4.430329465818021,
+        "base_entropy": 4.458615303039551,
+        "normalized_mutual_info": 0.006344085604067646,
+        "f_statistic": 19.87800153234145,
+        "n_tokens": 2000
+      },
+      "1": {
+        "rsa": 0.49947699904441833,
+        "conditional_entropy": 4.583344506487554,
+        "base_entropy": 4.601400852203369,
+        "normalized_mutual_info": 0.003924097520851178,
+        "f_statistic": 25.5696344606709,
+        "n_tokens": 2000
+      },
+      "2": {
+        "rsa": 0.20247843861579895,
+        "conditional_entropy": 4.4629775998556065,
+        "base_entropy": 4.4883809089660645,
+        "normalized_mutual_info": 0.005659793491036813,
+        "f_statistic": 27.040460794651384,
+        "n_tokens": 2000
+      },
+      "3": {
+        "rsa": 0.1427675485610962,
+        "conditional_entropy": 4.541566488585496,
+        "base_entropy": 4.570895195007324,
+        "normalized_mutual_info": 0.006416403156584985,
+        "f_statistic": 34.96051964081177,
+        "n_tokens": 2000
+      },
+      "4": {
+        "rsa": 0.07771937549114227,
+        "conditional_entropy": 4.556118498190657,
+        "base_entropy": 4.587010860443115,
+        "normalized_mutual_info": 0.006734747992754087,
+        "f_statistic": 40.88856107534562,
+        "n_tokens": 2000
+      },
+      "5": {
+        "rsa": 0.6739184260368347,
+        "conditional_entropy": 4.449848989261616,
+        "base_entropy": 4.480531692504883,
+        "normalized_mutual_info": 0.006848004942385159,
+        "f_statistic": 45.500621247943485,
+        "n_tokens": 2000
+      },
+      "6": {
+        "rsa": 0.633912980556488,
+        "conditional_entropy": 4.37161433908863,
+        "base_entropy": 4.413466930389404,
+        "normalized_mutual_info": 0.009482928470079676,
+        "f_statistic": 59.53552072612719,
+        "n_tokens": 2000
+      },
+      "7": {
+        "rsa": 0.6378320455551147,
+        "conditional_entropy": 4.139598580890772,
+        "base_entropy": 4.1946001052856445,
+        "normalized_mutual_info": 0.013112459563055814,
+        "f_statistic": 58.25738269311444,
+        "n_tokens": 2000
+      },
+      "8": {
+        "rsa": 0.12025723606348038,
+        "conditional_entropy": 3.8590749295019524,
+        "base_entropy": 3.914536476135254,
+        "normalized_mutual_info": 0.014168100573270581,
+        "f_statistic": 52.68184894464177,
+        "n_tokens": 2000
+      },
+      "9": {
+        "rsa": 0.24871183931827545,
+        "conditional_entropy": 3.498225761696863,
+        "base_entropy": 3.54227614402771,
+        "normalized_mutual_info": 0.01243561495925716,
+        "f_statistic": 37.00921886687079,
+        "n_tokens": 2000
+      },
+      "10": {
+        "rsa": 0.2240416407585144,
+        "conditional_entropy": 3.241920618496144,
+        "base_entropy": 3.3364057540893555,
+        "normalized_mutual_info": 0.02831943782443393,
+        "f_statistic": 64.56833429752244,
+        "n_tokens": 2000
+      },
+      "11": {
+        "rsa": 0.11311259865760803,
+        "conditional_entropy": 3.09150103412097,
+        "base_entropy": 3.1579854488372803,
+        "normalized_mutual_info": 0.021052793175554606,
+        "f_statistic": 56.34989820873315,
+        "n_tokens": 2000
+      },
+      "12": {
+        "rsa": 0.2674315571784973,
+        "conditional_entropy": 2.4678588811209914,
+        "base_entropy": 2.6099627017974854,
+        "normalized_mutual_info": 0.05444668616687893,
+        "f_statistic": 68.33279439891815,
+        "n_tokens": 2000
+      },
+      "13": {
+        "rsa": -0.047503888607025146,
+        "conditional_entropy": 2.938875704067698,
+        "base_entropy": 3.161468505859375,
+        "normalized_mutual_info": 0.07040804002160694,
+        "f_statistic": 53.284756756130264,
+        "n_tokens": 2000
+      },
+      "14": {
+        "rsa": 0.1304742693901062,
+        "conditional_entropy": 2.3748919019090984,
+        "base_entropy": 2.5284922122955322,
+        "normalized_mutual_info": 0.060747788358623205,
+        "f_statistic": 51.86462261210051,
+        "n_tokens": 2000
+      },
+      "15": {
+        "rsa": 0.5826071500778198,
+        "conditional_entropy": 4.594839466540694,
+        "base_entropy": 4.681567192077637,
+        "normalized_mutual_info": 0.018525361656338786,
+        "f_statistic": 60.95718252069651,
+        "n_tokens": 2000
+      }
+    }
+  },
+  "baseline": {
+    "global": {
+      "avg_rsa": 0.27490387577563524,
+      "avg_conditional_entropy": 4.863966844684942,
+      "avg_f_statistic": 15.50944970803643,
+      "avg_normalized_mutual_info": 0.011588130740250805,
+      "n_layers_analyzed": 16
+    },
+    "per_layer": {
+      "0": {
+        "rsa": 0.2538462281227112,
+        "conditional_entropy": 5.446023241422251,
+        "base_entropy": 5.450234889984131,
+        "normalized_mutual_info": 0.0007727462465685217,
+        "f_statistic": 10.277317094327865,
+        "n_tokens": 2000
+      },
+      "1": {
+        "rsa": 0.09117518365383148,
+        "conditional_entropy": 5.487897917590564,
+        "base_entropy": 5.492228031158447,
+        "normalized_mutual_info": 0.0007884074614953821,
+        "f_statistic": 8.501089139971086,
+        "n_tokens": 2000
+      },
+      "2": {
+        "rsa": 0.23431582748889923,
+        "conditional_entropy": 5.460695618013792,
+        "base_entropy": 5.466522216796875,
+        "normalized_mutual_info": 0.0010658694031317737,
+        "f_statistic": 10.779941029792194,
+        "n_tokens": 2000
+      },
+      "3": {
+        "rsa": 0.28140825033187866,
+        "conditional_entropy": 5.383678721704884,
+        "base_entropy": 5.396402835845947,
+        "normalized_mutual_info": 0.002357888116314003,
+        "f_statistic": 15.791004332250466,
+        "n_tokens": 2000
+      },
+      "4": {
+        "rsa": 0.25921696424484253,
+        "conditional_entropy": 5.332029206377477,
+        "base_entropy": 5.3517842292785645,
+        "normalized_mutual_info": 0.0036912965877993332,
+        "f_statistic": 19.042580690338863,
+        "n_tokens": 2000
+      },
+      "5": {
+        "rsa": 0.24667511880397797,
+        "conditional_entropy": 5.232939140639158,
+        "base_entropy": 5.2593584060668945,
+        "normalized_mutual_info": 0.005023286746730896,
+        "f_statistic": 14.780875564827245,
+        "n_tokens": 2000
+      },
+      "6": {
+        "rsa": 0.2694789469242096,
+        "conditional_entropy": 5.1742986947738325,
+        "base_entropy": 5.203762531280518,
+        "normalized_mutual_info": 0.005662025558036844,
+        "f_statistic": 14.347215958291496,
+        "n_tokens": 2000
+      },
+      "7": {
+        "rsa": 0.37789222598075867,
+        "conditional_entropy": 5.059017169058232,
+        "base_entropy": 5.110948085784912,
+        "normalized_mutual_info": 0.010160720819980203,
+        "f_statistic": 23.436564426160402,
+        "n_tokens": 2000
+      },
+      "8": {
+        "rsa": 0.24490010738372803,
+        "conditional_entropy": 5.035480367525874,
+        "base_entropy": 5.07533073425293,
+        "normalized_mutual_info": 0.00785177729986958,
+        "f_statistic": 14.074998422112564,
+        "n_tokens": 2000
+      },
+      "9": {
+        "rsa": 0.28049004077911377,
+        "conditional_entropy": 5.019794089038197,
+        "base_entropy": 5.065491676330566,
+        "normalized_mutual_info": 0.0090213527377186,
+        "f_statistic": 13.726294800343645,
+        "n_tokens": 2000
+      },
+      "10": {
+        "rsa": 0.3058324456214905,
+        "conditional_entropy": 4.811022628950329,
+        "base_entropy": 4.876405239105225,
+        "normalized_mutual_info": 0.013407952541863312,
+        "f_statistic": 21.379915342067402,
+        "n_tokens": 2000
+      },
+      "11": {
+        "rsa": 0.28349417448043823,
+        "conditional_entropy": 4.620651776140386,
+        "base_entropy": 4.703705787658691,
+        "normalized_mutual_info": 0.017657144194614803,
+        "f_statistic": 17.985162560521655,
+        "n_tokens": 2000
+      },
+      "12": {
+        "rsa": 0.29199478030204773,
+        "conditional_entropy": 4.340211960078493,
+        "base_entropy": 4.429165840148926,
+        "normalized_mutual_info": 0.020083664301584377,
+        "f_statistic": 15.008564458431502,
+        "n_tokens": 2000
+      },
+      "13": {
+        "rsa": 0.2709811329841614,
+        "conditional_entropy": 4.175172353950315,
+        "base_entropy": 4.285279273986816,
+        "normalized_mutual_info": 0.02569422264913924,
+        "f_statistic": 14.323131080762948,
+        "n_tokens": 2000
+      },
+      "14": {
+        "rsa": 0.3311898112297058,
+        "conditional_entropy": 3.7150144879281157,
+        "base_entropy": 3.8461644649505615,
+        "normalized_mutual_info": 0.03409889979396463,
+        "f_statistic": 16.609670896318615,
+        "n_tokens": 2000
+      },
+      "15": {
+        "rsa": 0.37557077407836914,
+        "conditional_entropy": 3.5295421417671626,
+        "base_entropy": 3.63148832321167,
+        "normalized_mutual_info": 0.028072837385201402,
+        "f_statistic": 18.086869532064906,
+        "n_tokens": 2000
+      }
+    }
+  },
+  "config": {
+    "base_model": "allenai/OLMoE-1B-7B-0924",
+    "ours_path": "saves/olmoe/moe_lora/v2_global_pool128_best",
+    "baseline_path": "saves/olmoe/moe_lora/baseline2_independent_global",
+    "dataset": "gsm8k",
+    "limit": 200,
+    "batch_size": 4,
+    "save_dir": "analysis_results/routing_alignment"
+  }
+}

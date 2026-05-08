@@ -56,16 +56,32 @@ torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
 # 评估 MBPP（代码生成）
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora_code/v2_global_test  \
+    --adapter_path saves/olmoe/moe_lora_code/baseline2_independent \
     --batch_size 32 \
     --max_new_tokens 512
 
 # 评估 HumanEval（代码生成，需先 pip install human-eval）
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora_code/v1_per_layer \
+    --adapter_path saves/olmoe/moe_lora_code/baseline2_independent \
     --batch_size 16 \
     --max_new_tokens 512
+
+# 5. 路由分析：对比 V2 (projection) vs Baseline2 (independent) 的专家激活模式
+python eval_scripts/analyze_routing.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --ours_path saves/olmoe/moe_lora/v2_global_pool128_best \
+    --baseline_path saves/olmoe/moe_lora/baseline2_independent_global \
+    --dataset gsm8k \
+    --limit 200
+
+# 6. 全局共享池优势分析：跨层复用、expert 角色分化、组合多样性（对比 per_layer）
+python eval_scripts/analyze_global_pool.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/baseline2_independent_global \
+    --baseline_path saves/olmoe/moe_lora/baseline2_independent \
+    --dataset gsm8k \
+    --limit 200
 
 # 4. 评估 MMLU（选择题，走 LlamaFactory 自带 eval）
 llamafactory-cli eval \
@@ -135,6 +151,7 @@ MoE-LoRA setup complete | trainable: 4.20M (0.299%) | total: 1404.32M
 | `eval_scripts/eval_math500.py` | MATH-500 | 生成 + `\boxed{...}` 抽取 | ✅ |
 | `eval_scripts/eval_mbpp.py` | MBPP | 生成 + 执行 assert 测试 | ✅ |
 | `eval_scripts/eval_humaneval.py` | HumanEval | 生成 + 执行 unit test（需 `pip install human-eval`）| ✅ |
+| `eval_scripts/eval_general.py` | CSQA / ARC-C / StrategyQA / CEval / MMLU | Likelihood-based 选择题 | ✅ |
 
 通用参数：
 ```bash
@@ -172,6 +189,37 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --adapter_path saves/olmoe/moe_lora_code/baseline2_independent_global \
     --batch_size 32 --max_new_tokens 512
 ```
+
+### 通用能力评测（灾难性遗忘检验）
+
+领域微调后，评估模型在通用 benchmark 上的性能保持度（对标论文 Table 2）：
+
+```bash
+# 评估 base model（作为 reference baseline）
+torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --benchmark all \
+    --batch_size 16 \
+    --save_path eval_results/base_general.jsonl
+
+# 评估领域微调后的通用能力
+torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path saves/olmoe/moe_lora/v2_global_unlinear_1 \
+    --benchmark all \
+    --batch_size 16 \
+    --save_path eval_results/v2_general.jsonl
+
+# 只跑单个 benchmark（逗号分隔可选多个）
+python eval_scripts/eval_general.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --benchmark arc_challenge,mmlu \
+    --batch_size 8 --limit 100
+```
+
+支持的 benchmark：`commonsenseqa`, `arc_challenge`, `strategyqa`, `ceval`, `mmlu`, `all`
+
+评测方式：likelihood-based（计算每个选项的条件 log-prob，选最高）。对 base model 比生成字母更稳定准确。
 
 ---
 
