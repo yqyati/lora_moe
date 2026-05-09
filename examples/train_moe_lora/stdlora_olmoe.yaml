@@ -22,7 +22,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/olmoe/lora/stdlora_r64
+output_dir: saves/olmoe/moe_lora/stdlora_r64
 logging_steps: 5
 save_steps: 400
 plot_loss: true
