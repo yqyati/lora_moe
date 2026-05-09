@@ -1,0 +1,37 @@
+### model
+model_name_or_path: allenai/OLMoE-1B-7B-0924
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (FFT baseline:全参数微调,作为性能上界参考)
+stage: sft
+do_train: true
+finetuning_type: full
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/olmoe/fft_math/fft_olmoe
+logging_steps: 5
+save_steps: 800
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: math_fft_olmoe
+
+### train (FFT 内存占用大,batch 小一点 + grad accum 大,bf16 + ZeRO-3 必须)
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-5
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+deepspeed: examples/deepspeed/ds_z3_config.json
+ddp_timeout: 180000000

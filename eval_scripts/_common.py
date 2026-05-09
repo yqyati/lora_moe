@@ -58,8 +58,24 @@ def load(args) -> Tuple[AutoTokenizer, AutoModelForCausalLM]:
             trust_remote_code=True,
         )
     if args.adapter_path:
-        print(f"Loading MoE-LoRA adapter from {args.adapter_path}")
-        model = load_moe_lora_state(model, args.adapter_path)
+        # 自动识别 adapter 类型:
+        #   有 moe_lora_state.safetensors → MoE-LoRA(自家实现)
+        #   有 adapter_config.json        → 标准 LoRA(PEFT)
+        moe_state = os.path.join(args.adapter_path, "moe_lora_state.safetensors")
+        peft_config = os.path.join(args.adapter_path, "adapter_config.json")
+        if os.path.exists(moe_state):
+            print(f"Loading MoE-LoRA adapter from {args.adapter_path}")
+            model = load_moe_lora_state(model, args.adapter_path)
+        elif os.path.exists(peft_config):
+            print(f"Loading PEFT (standard) LoRA adapter from {args.adapter_path}")
+            from peft import PeftModel
+            model = PeftModel.from_pretrained(model, args.adapter_path, torch_dtype=dtype)
+            model = model.merge_and_unload()  # 合并 LoRA 到 base 权重,推理更快
+        else:
+            raise FileNotFoundError(
+                f"{args.adapter_path} 既无 moe_lora_state.safetensors 也无 adapter_config.json,"
+                "无法识别 adapter 类型"
+            )
     else:
         print("No --adapter_path provided, evaluating BASE model")
     model.eval()

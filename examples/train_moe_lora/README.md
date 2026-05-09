@@ -57,7 +57,7 @@ python3 -c "import json; rs=[json.loads(l) for l in open('/tmp/humaneval_debug.j
 # 评估 MBPP（代码生成）
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora_code/v2_residual \
+    --adapter_path saves/olmoe/moe_lora_code/v2_global \
     --batch_size 32 \
     --max_new_tokens 512
 

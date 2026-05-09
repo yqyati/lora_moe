@@ -46,15 +46,30 @@ def build_parser():
 
 
 def extract_code(completion: str) -> str:
-    """从 completion 抽出 Python 代码。"""
-    # 优先抽 ```python ... ```
+    """从 completion 抽出 Python 代码。
+
+    注意:prompt 末尾是 "```python\\n",模型从 fence 内部开始写,所以 completion
+    通常形如 "<code>\\n```\\n<explanation>",只有闭合 ``` 没有开头 ```。
+    """
+    # 1) 有完整 ```python ... ``` 块(模型自己写了开头 fence)→ 抽里面
     m = re.search(r"```(?:python)?\n(.*?)```", completion, re.DOTALL)
     if m:
         return m.group(1)
-    # 没 markdown fence，取到第一个空行或非缩进非 def/class 行
-    lines = completion.split("\n")
+
+    # 2) 没完整块 → 截到第一个 ``` (闭合 fence)之前
+    fence_idx = completion.find("```")
+    if fence_idx >= 0:
+        return completion[:fence_idx]
+
+    # 3) 完全没 fence → 截到第一个顶层裸语句(避免把解释文本当代码)
     out_lines = []
-    for line in lines:
+    for line in completion.split("\n"):
+        stripped = line.strip()
+        if stripped and not line.startswith((" ", "\t")) and out_lines:
+            if stripped.startswith(("def ", "class ", "import ", "from ", "@")) or stripped.startswith("#"):
+                out_lines.append(line)
+                continue
+            break
         out_lines.append(line)
     return "\n".join(out_lines)
 

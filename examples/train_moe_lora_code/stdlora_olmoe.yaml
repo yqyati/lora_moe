@@ -1,0 +1,41 @@
+### model
+model_name_or_path: allenai/OLMoE-1B-7B-0924
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (Baseline1: Standard LoRA on attention q/v — Hu et al. 2021 经典配置)
+# 角色:回答"是否需要 MoE 结构"的对照(无 expert 分裂、无 router、纯 attention LoRA)
+# 参数量与 v2 对齐:16 layers × 2 modules(q,v) × 2(A,B) × rank=64 × 2048 = 8.39M ≈ 8.4M
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 64
+lora_alpha: 128                  # = 2 × rank(标准做法)
+lora_dropout: 0.0
+lora_target: q_proj,v_proj       # 经典 LoRA 配置:仅 attention 的 q 和 v
+
+### dataset
+dataset: magicoder_oss_75k
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/olmoe/lora_code/stdlora_r64
+logging_steps: 5
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: code_stdlora_r64
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 2
+learning_rate: 2.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
