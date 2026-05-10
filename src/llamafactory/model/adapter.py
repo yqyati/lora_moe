@@ -357,6 +357,44 @@ def _setup_moe_lora(
     return model
 
 
+def _setup_mola(
+    model: "PreTrainedModel",
+    finetuning_args: "FinetuningArguments",
+    is_trainable: bool,
+    cast_trainable_params_to_fp32: bool,
+) -> "PreTrainedModel":
+    if not is_trainable:
+        return model
+
+    logger.info_rank0("Fine-tuning method: MoLA (Layer-wise Expert Allocation)")
+
+    # 1. freeze base model
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # 2. 注入 MoLA 模块
+    from .model_utils.mola import inject_mola
+
+    inject_mola(model, finetuning_args)
+
+    # 3. fp32 cast
+    if cast_trainable_params_to_fp32:
+        for p in model.parameters():
+            if p.requires_grad:
+                p.data = p.data.to(torch.float32)
+
+    # 4. 校验
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    logger.info_rank0(
+        f"MoLA setup complete | "
+        f"trainable: {trainable / 1e6:.2f}M ({100 * trainable / total:.3f}%) | "
+        f"total: {total / 1e6:.2f}M"
+    )
+
+    return model
+
+
 def init_adapter(
     config: "PretrainedConfig",
     model: "PreTrainedModel",
@@ -401,6 +439,8 @@ def init_adapter(
         )
     elif finetuning_args.finetuning_type == "moe_lora":
         model = _setup_moe_lora(model, finetuning_args, is_trainable, cast_trainable_params_to_fp32)
+    elif finetuning_args.finetuning_type == "mola":
+        model = _setup_mola(model, finetuning_args, is_trainable, cast_trainable_params_to_fp32)
     else:
         raise NotImplementedError(f"Unknown finetuning type: {finetuning_args.finetuning_type}.")
 

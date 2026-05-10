@@ -147,6 +147,14 @@ def run_sft(
         # 读的是 state.log_history 最后一条已经写全的记录）。
         trainer.callback_handler.callbacks.insert(0, MoELoRAStatsCallback())
 
+    # MoLA: 复用 moe_lora 的 stats callback(模块结构相同),自家 save callback
+    if finetuning_args.finetuning_type == "mola":
+        from ...model.model_utils.mola import MoLASaveCallback
+        from ...model.model_utils.moe_lora import MoELoRAStatsCallback
+
+        trainer.add_callback(MoLASaveCallback(finetuning_args))
+        trainer.callback_handler.callbacks.insert(0, MoELoRAStatsCallback())
+
     # Training
     if training_args.do_train:
         train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
@@ -155,6 +163,11 @@ def run_sft(
             from ...model.model_utils.moe_lora import save_moe_lora_state
 
             save_moe_lora_state(trainer.model, training_args.output_dir, finetuning_args)
+        elif finetuning_args.finetuning_type == "mola":
+            # MoLA: 保存 trainable params + 配置(用 mola_state.safetensors / mola_config.json)
+            from ...model.model_utils.mola import save_mola_state
+
+            save_mola_state(trainer.model, training_args.output_dir, finetuning_args)
         else:
             trainer.save_model()
         if finetuning_args.include_effective_tokens_per_second:

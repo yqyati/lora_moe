@@ -461,7 +461,7 @@ class FinetuningArguments(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
-    finetuning_type: Literal["lora", "oft", "freeze", "full", "moe_lora"] = field(
+    finetuning_type: Literal["lora", "oft", "freeze", "full", "moe_lora", "mola"] = field(
         default="lora",
         metadata={"help": "Which fine-tuning method to use."},
     )
@@ -524,6 +524,30 @@ class FinetuningArguments(
             "help": "MoE-LoRA: load balancing auxiliary loss coefficient. "
             "0 = disabled. Suggested starting value: 0.001."
         },
+    )
+    mola_n_experts_per_layer: str = field(
+        default="8,8,8,8,12,12,12,12,20,20,20,20,24,24,24,24",
+        metadata={
+            "help": "MoLA (NAACL 2024): comma-separated per-layer LoRA expert counts. "
+            "Length must equal number of MoE layers. Default is increasing-allocation "
+            "for OLMoE-1B-7B (16 layers, total 256 experts ≈ 8.4M trainable)."
+        },
+    )
+    mola_rank: int = field(
+        default=8,
+        metadata={"help": "MoLA: LoRA rank per expert."},
+    )
+    mola_alpha: int = field(
+        default=16,
+        metadata={"help": "MoLA: LoRA alpha (scaling = alpha / rank). Convention: 2 * rank."},
+    )
+    mola_top_k: int = field(
+        default=2,
+        metadata={"help": "MoLA: top-k expert activation per token."},
+    )
+    mola_balance_loss_coef: float = field(
+        default=0.0,
+        metadata={"help": "MoLA: load balance loss coefficient. 0 = disabled (MoLA paper default)."},
     )
     use_llama_pro: bool = field(
         default=False,
@@ -633,7 +657,7 @@ class FinetuningArguments(
         self.apollo_target: list[str] = split_arg(self.apollo_target)
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
 
-        assert self.finetuning_type in ["lora", "oft", "freeze", "full", "moe_lora"], "Invalid fine-tuning method."
+        assert self.finetuning_type in ["lora", "oft", "freeze", "full", "moe_lora", "mola"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
 
