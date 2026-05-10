@@ -14,6 +14,7 @@ moe_lora_top_k: 2
 moe_lora_pool_share: per_layer
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
+moe_lora_routing_mode: learned          # 显式声明:routing projection (V2 核心机制),非 follow_moe / independent
 
 ### dataset
 dataset: metamathqa_r1
@@ -33,8 +34,8 @@ report_to: wandb       # 强烈建议 wandb，监控 dead_experts / activation_i
 run_name: v1_per_layer
 
 ### train
-per_device_train_batch_size: 32
-gradient_accumulation_steps: 2
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 8
 learning_rate: 4.0e-4
 num_train_epochs: 2.0
 lr_scheduler_type: cosine

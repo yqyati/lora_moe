@@ -55,11 +55,28 @@ def extract_boxed(text: str):
 
 
 def normalize(s: str) -> str:
-    """简单归一化：去空格、去 \\ 前缀、统一分数 / 等价表达。"""
+    """MATH-500 答案归一化(强化版,处理常见 latex 等价形式)。"""
     if s is None:
         return ""
-    s = s.replace(" ", "").replace("\\!", "").replace("\\,", "").replace("\\;", "")
+    # 1. 去空格 + 各种空白 latex 命令
+    s = s.replace(" ", "").replace("\\!", "").replace("\\,", "").replace("\\;", "").replace("\\:", "")
+    # 2. 去 \left / \right 修饰(集合 / 坐标对常见)
+    s = s.replace("\\left", "").replace("\\right", "")
+    # 3. 统一分数:dfrac/tfrac → frac,a/b → \frac{a}{b}
     s = s.replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
+    # 简单分数 (-?数字)/(数字) → \frac{a}{b}(必须是整体分数,不能伤及 \frac{1}{2} 等)
+    s = re.sub(r"(?<!\w)(-?\d+)/(\d+)(?!\w)", r"\\frac{\1}{\2}", s)
+    # 4. 统一 \sqrt: \sqrt2 → \sqrt{2}
+    s = re.sub(r"\\sqrt(\d+)", r"\\sqrt{\1}", s)
+    # 5. 浮点小数末尾零 → 整数(5.0 → 5)
+    s = re.sub(r"(?<![\d.])(-?\d+)\.0+(?![\d.])", r"\1", s)
+    # 6. 指数大括号:x^2 ↔ x^{2}(统一去掉单字符大括号)
+    s = re.sub(r"\^\{(\w)\}", r"^\1", s)
+    # 7. \pi vs pi 等希腊字母
+    s = s.replace("\\pi", "pi").replace("\\theta", "theta")
+    # 8. \cdot / \times → *
+    s = s.replace("\\cdot", "*").replace("\\times", "*")
+    # 9. 末尾标点
     s = s.rstrip(".")
     return s.lower()
 

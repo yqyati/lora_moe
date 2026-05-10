@@ -119,9 +119,33 @@ def wrap_default_chat(tokenizer, user_content: str) -> str:
 
 
 def extract_gsm8k_answer(text: str):
-    """GSM8K 标准答案抽取：优先 #### ，否则取最后一个数字。"""
-    m = re.search(r"####\s*(-?\d+(?:\.\d+)?)", text)
+    """GSM8K 标准答案抽取(强化版):
+    - 优先 #### 后的数字
+    - 处理千分位逗号 ('1,234' → '1234')
+    - 整数化浮点小数 ('5.0' → '5', '5.00' → '5')
+    - fallback 取最后一个数字
+    """
+    # 1. 优先匹配 #### 后的数字(允许逗号)
+    m = re.search(r"####\s*(-?[\d,]+(?:\.\d+)?)", text)
     if m:
-        return m.group(1).strip()
-    nums = re.findall(r"-?\d+(?:\.\d+)?", text)
-    return nums[-1] if nums else None
+        return _normalize_num(m.group(1))
+    # 2. fallback: 取最后一个数字
+    nums = re.findall(r"-?[\d,]+(?:\.\d+)?", text)
+    return _normalize_num(nums[-1]) if nums else None
+
+
+def _normalize_num(s: str):
+    """规范化数字字符串: 去千分位逗号,整数化浮点(5.0 → 5)。"""
+    if s is None:
+        return None
+    s = s.replace(",", "").strip()
+    # 末尾纯零的浮点 → 整数
+    if "." in s:
+        try:
+            f = float(s)
+            if f == int(f):
+                return str(int(f))
+            return s
+        except ValueError:
+            return s
+    return s

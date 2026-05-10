@@ -200,9 +200,9 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
 
 ```bash
 # 评估 base model（作为 reference baseline）
-torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
+ CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=1 eval_scripts/eval_general.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --benchmark all \
+    --benchmark commonsenseqa \
     --batch_size 16 \
     --save_path eval_results/base_general.jsonl
 
