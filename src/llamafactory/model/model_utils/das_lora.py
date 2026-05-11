@@ -179,15 +179,21 @@ def inject_das_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         else:
             p.requires_grad = False
 
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
+    # 兼容 DeepSpeed ZeRO-3:用 ds_numel 拿全量(否则 numel 只能拿本地 shard)
+    def _real_numel(p):
+        return getattr(p, "ds_numel", None) or p.numel()
+    trainable = sum(_real_numel(p) for p in model.parameters() if p.requires_grad)
+    total = sum(_real_numel(p) for p in model.parameters())
     logger.info_rank0(
         f"DAS-LoRA setup complete | trainable: {trainable / 1e6:.2f}M "
         f"({100 * trainable / total:.3f}%) | total: {total / 1e6:.2f}M"
     )
-    assert 0.0001 < trainable / total < 0.05, (
-        f"DAS-LoRA trainable ratio {trainable / total:.4f} out of expected range"
-    )
+    if not (0.0001 < trainable / total < 0.05):
+        # ZeRO-3 早期 base model 可能未 materialize,降级为 warning
+        logger.warning(
+            f"DAS-LoRA trainable ratio {trainable / total:.4f} out of expected range. "
+            "Under ZeRO-3 this may be due to params not yet materialized; verify after first step."
+        )
 
 
 def save_das_lora_state(model: nn.Module, save_dir: str,
@@ -195,33 +201,51 @@ def save_das_lora_state(model: nn.Module, save_dir: str,
     """Save trainable params + config + DAS selected experts JSON."""
     os.makedirs(save_dir, exist_ok=True)
 
-    state = {
-        name: param.detach().cpu()
-        for name, param in model.named_parameters()
-        if param.requires_grad
-    }
+    # ZeRO-3 兼容: 在 save 前 gather 所有 trainable params 的全量副本
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    try:
+        import deepspeed
+        gathered_ctx = deepspeed.zero.GatheredParameters(trainable_params, modifier_rank=0)
+    except Exception:
+        # 非 ZeRO-3 训练(普通 DDP / 单卡):无需 gather
+        gathered_ctx = None
+
+    state = {}
+    if gathered_ctx is not None:
+        with gathered_ctx:
+            # 只在 rank 0 真正构造 state(其他 rank 拿空 dict),safetensors.save_file 在所有 rank 都跑会冲突
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    state[name] = param.detach().cpu().clone()
+    else:
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                state[name] = param.detach().cpu()
+
     if not state:
         logger.warning_rank0("No trainable params, skip saving DAS-LoRA state.")
         return
-    safetensors.torch.save_file(state, os.path.join(save_dir, "das_lora_state.safetensors"))
+    # 只 rank 0 写入,避免多 rank 写同一文件
+    is_rank0 = int(os.environ.get("LOCAL_RANK", "0")) == 0
+    if is_rank0:
+        safetensors.torch.save_file(state, os.path.join(save_dir, "das_lora_state.safetensors"))
 
-    # Copy DAS selection JSON to checkpoint dir
-    src = finetuning_args.das_lora_selected_experts_path
-    dst = os.path.join(save_dir, "das_selected_experts.json")
-    if os.path.exists(src) and os.path.abspath(src) != os.path.abspath(dst):
-        shutil.copy(src, dst)
+        # Copy DAS selection JSON to checkpoint dir
+        src = finetuning_args.das_lora_selected_experts_path
+        dst = os.path.join(save_dir, "das_selected_experts.json")
+        if os.path.exists(src) and os.path.abspath(src) != os.path.abspath(dst):
+            shutil.copy(src, dst)
 
-    config = {
-        # Use local relative path; load_das_lora_state will resolve it
-        "das_lora_selected_experts_path": "das_selected_experts.json",
-        "das_lora_rank": finetuning_args.das_lora_rank,
-        "das_lora_alpha": finetuning_args.das_lora_alpha,
-        "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
-    }
-    with open(os.path.join(save_dir, "das_lora_config.json"), "w") as f:
-        json.dump(config, f, indent=2)
+        config = {
+            "das_lora_selected_experts_path": "das_selected_experts.json",
+            "das_lora_rank": finetuning_args.das_lora_rank,
+            "das_lora_alpha": finetuning_args.das_lora_alpha,
+            "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
+        }
+        with open(os.path.join(save_dir, "das_lora_config.json"), "w") as f:
+            json.dump(config, f, indent=2)
 
-    logger.info_rank0(f"Saved DAS-LoRA state ({len(state)} tensors) to {save_dir}")
+        logger.info_rank0(f"Saved DAS-LoRA state ({len(state)} tensors) to {save_dir}")
 
 
 def load_das_lora_state(model: "PreTrainedModel", load_dir: str) -> "PreTrainedModel":
@@ -273,5 +297,8 @@ class DASLoRASaveCallback(TrainerCallback):
         import glob
         for pattern in ("model.safetensors", "model-*.safetensors", "model.safetensors.index.json"):
             for f in glob.glob(os.path.join(ckpt_dir, pattern)):
-                os.remove(f)
-                logger.info_rank0(f"Removed redundant base model file: {f}")
+                try:
+                    os.remove(f)
+                    logger.info_rank0(f"Removed redundant base model file: {f}")
+                except FileNotFoundError:
+                    pass

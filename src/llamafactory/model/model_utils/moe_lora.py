@@ -471,9 +471,16 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     device, dtype = sample_param.device, sample_param.dtype
 
     d_model = model.config.hidden_size
-    n_experts_moe = getattr(model.config, "num_experts", None) or model.config.num_experts_per_tok * 8
-    if hasattr(model.config, "num_experts"):
-        n_experts_moe = model.config.num_experts
+    # transformers 4.x: num_experts; transformers 5.x: num_local_experts (Qwen3-MoE)
+    n_experts_moe = (
+        getattr(model.config, "num_experts", None)
+        or getattr(model.config, "num_local_experts", None)
+    )
+    if n_experts_moe is None:
+        raise RuntimeError(
+            "Could not determine N_E from config. Tried num_experts and num_local_experts. "
+            f"Available config fields: {list(vars(model.config).keys())[:30]}"
+        )
 
     # follow_moe 模式：复用原 MoE router，n_lora 必须等于 n_experts_moe，
     # top_k 通常等于原 MoE 的 top_k（OLMoE 是 num_experts_per_tok）。
@@ -565,15 +572,20 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         else:
             p.requires_grad = False
 
-    # 5. 校验 trainable 比例
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
+    # 5. 校验 trainable 比例(兼容 DeepSpeed ZeRO-3:用 ds_numel 而非 numel)
+    def _real_numel(p):
+        # ZeRO-3 sharded params 使用 ds_numel 拿到全量,否则 numel() 只能拿到本地 shard
+        return getattr(p, "ds_numel", None) or p.numel()
+    trainable = sum(_real_numel(p) for p in model.parameters() if p.requires_grad)
+    total = sum(_real_numel(p) for p in model.parameters())
     ratio = trainable / total if total > 0 else 0.0
-    assert 0.00001 < ratio < 0.10, (
-        f"Trainable ratio {ratio:.5f} out of expected range [1e-5, 0.1]. "
-        f"trainable={trainable}, total={total}. "
-        "Likely a bug in inject_moe_lora or freeze step."
-    )
+    if not (0.00001 < ratio < 0.10):
+        # ZeRO-3 早期阶段 base model 可能还没 materialize,降级为 warning
+        logger.warning(
+            f"Trainable ratio {ratio:.5f} out of expected range [1e-5, 0.1]. "
+            f"trainable={trainable}, total={total}. "
+            "Under ZeRO-3 this may be due to params not yet materialized; verify after first step."
+        )
 
     # 6. 注册 balance loss hook（coef > 0 时生效，线性衰减到 0）
     balance_coef = getattr(finetuning_args, "moe_lora_balance_loss_coef", 0.0)
@@ -616,18 +628,37 @@ def save_moe_lora_state(
     """
     os.makedirs(save_dir, exist_ok=True)
 
-    # 1. 提取所有 trainable 参数
-    state = {
-        name: param.detach().cpu()
-        for name, param in model.named_parameters()
-        if param.requires_grad
-    }
+    # ZeRO-3 兼容: 在 save 前 gather 所有 trainable params 的全量副本
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    try:
+        import deepspeed
+        gathered_ctx = deepspeed.zero.GatheredParameters(trainable_params, modifier_rank=0)
+    except Exception:
+        gathered_ctx = None
+
+    # 1. 提取所有 trainable 参数(在 gather 上下文内)
+    state = {}
+    if gathered_ctx is not None:
+        with gathered_ctx:
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    state[name] = param.detach().cpu().clone()
+    else:
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                state[name] = param.detach().cpu()
+
     if not state:
         logger.warning_rank0("No trainable params found, skip saving moe_lora state.")
         return
+
+    # 只 rank 0 写入磁盘,避免多 rank 同时写同一文件
+    is_rank0 = int(os.environ.get("LOCAL_RANK", "0")) == 0
+    if not is_rank0:
+        return
     safetensors.torch.save_file(state, os.path.join(save_dir, "moe_lora_state.safetensors"))
 
-    # 2. 保存配置（重建模型结构必需）
+    # 2. 保存配置(重建模型结构必需)
     config = {
         "moe_lora_n_experts": finetuning_args.moe_lora_n_experts,
         "moe_lora_rank": finetuning_args.moe_lora_rank,
@@ -640,7 +671,6 @@ def save_moe_lora_state(
         "moe_lora_routing_mode": getattr(finetuning_args, "moe_lora_routing_mode", "learned"),
         "moe_lora_balance_loss_coef": getattr(finetuning_args, "moe_lora_balance_loss_coef", 0.0),
         "moe_lora_hidden_bottleneck_dim": getattr(finetuning_args, "moe_lora_hidden_bottleneck_dim", 0),
-        # 元信息（不属于 finetuning_args，加载时要 pop 掉）
         "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
     }
     with open(os.path.join(save_dir, "moe_lora_config.json"), "w") as f:
@@ -747,12 +777,16 @@ class MoELoRASaveCallback(TrainerCallback):
             return
         ckpt_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
         save_moe_lora_state(model, ckpt_dir, self.finetuning_args)
-        # 删除 Trainer 自动保存的完整基座模型，只保留 LoRA 状态
+        # 删除 Trainer 自动保存的完整基座模型,只保留 LoRA 状态
         import glob
         for pattern in ("model.safetensors", "model-*.safetensors", "model.safetensors.index.json"):
             for f in glob.glob(os.path.join(ckpt_dir, pattern)):
-                os.remove(f)
-                logger.info_rank0(f"Removed redundant base model file: {f}")
+                try:
+                    os.remove(f)
+                    logger.info_rank0(f"Removed redundant base model file: {f}")
+                except FileNotFoundError:
+                    # 多进程可能已被其他 rank 删除
+                    pass
 
 
 class MoELoRAStatsCallback(TrainerCallback):

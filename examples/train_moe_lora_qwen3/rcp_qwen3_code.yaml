@@ -1,0 +1,57 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (RCP = routing projection + hidden state bottleneck) — code domain
+# Qwen3-30B-A3B: 48 层, N_E=128, top-8 routing, hidden=2048
+# 等比例对齐 OLMoE: N_L=512(×2), d_b=32(×2), rank=16
+# 参数估算:
+#   W_l (per-layer):  48 × 160 × 512 = 3.93M (input dim = 128 + 32 augment)
+#   h_proj (per-layer): 48 × 2048 × 32 = 3.15M
+#   LoRA pool (rank=16, global): 512 × 2 × 16 × 2048 = 33.55M
+#   总 trainable ≈ 40.63M (~ 0.135% of 30B,与 OLMoE 0.131% 对齐)
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 1024
+moe_lora_rank: 8
+moe_lora_alpha: 16
+moe_lora_top_k: 4
+moe_lora_pool_share: global
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_balance_loss_coef: 0.0001
+moe_lora_hidden_bottleneck_dim: 32
+
+### dataset
+dataset: magicoder_oss_75k
+template: qwen3
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/moe_lora_code/rcp_h16
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: qwen3_rcp_h16_code
+
+### train
+# 8× H800 — effective batch = 4 × 16 × 8 = 512
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 3
+learning_rate: 6.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

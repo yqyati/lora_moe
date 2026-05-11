@@ -42,14 +42,21 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
 
 torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora/v2_enhanced_h16 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_new/v2_enhanced_rank128 \
     --batch_size 512 \
     --max_new_tokens 512
+
+torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
+    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/das_lora \
+    --batch_size 512 \
+    --max_new_tokens 512
+  
 
 # 评估 MATH-500
 torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora/v2_enhanced_h16 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_new/v2_enhanced_rank128 \
     --batch_size 64 \
     --max_new_tokens 512
 
@@ -61,6 +68,15 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --batch_size 512 \
     --max_new_tokens 512
 
+torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
+    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/das_lora \
+    --batch_size 512 \
+    --max_new_tokens 512
+torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
+    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+    --batch_size 512 \
+    --max_new_tokens 512
 # 评估 HumanEval（代码生成，需先 pip install human-eval）
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model allenai/OLMoE-1B-7B-0924 \

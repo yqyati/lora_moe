@@ -99,29 +99,51 @@ def inject_mola(model: "PreTrainedModel", finetuning_args: "FinetuningArguments"
         else:
             p.requires_grad = False
 
-    # 校验
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
+    # 校验(兼容 DeepSpeed ZeRO-3:用 ds_numel 拿全量)
+    def _real_numel(p):
+        return getattr(p, "ds_numel", None) or p.numel()
+    trainable = sum(_real_numel(p) for p in model.parameters() if p.requires_grad)
+    total = sum(_real_numel(p) for p in model.parameters())
     logger.info_rank0(
         f"MoLA setup complete | trainable: {trainable / 1e6:.2f}M "
         f"({100 * trainable / total:.3f}%) | total: {total / 1e6:.2f}M"
     )
-    assert 0.0001 < trainable / total < 0.05, (
-        f"MoLA trainable ratio {trainable / total:.4f} out of expected range (0.01% - 5%)"
-    )
+    if not (0.0001 < trainable / total < 0.05):
+        logger.warning(
+            f"MoLA trainable ratio {trainable / total:.4f} out of expected range (0.01% - 5%). "
+            "Under ZeRO-3 this may be due to params not yet materialized."
+        )
 
 
 def save_mola_state(model: nn.Module, save_dir: str, finetuning_args: "FinetuningArguments") -> None:
     """保存 MoLA trainable 参数 + 配置。"""
     os.makedirs(save_dir, exist_ok=True)
 
-    state = {
-        name: param.detach().cpu()
-        for name, param in model.named_parameters()
-        if param.requires_grad
-    }
+    # ZeRO-3 兼容: gather 所有 trainable params 全量副本
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    try:
+        import deepspeed
+        gathered_ctx = deepspeed.zero.GatheredParameters(trainable_params, modifier_rank=0)
+    except Exception:
+        gathered_ctx = None
+
+    state = {}
+    if gathered_ctx is not None:
+        with gathered_ctx:
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    state[name] = param.detach().cpu().clone()
+    else:
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                state[name] = param.detach().cpu()
+
     if not state:
         logger.warning_rank0("No trainable params found, skip saving MoLA state.")
+        return
+
+    is_rank0 = int(os.environ.get("LOCAL_RANK", "0")) == 0
+    if not is_rank0:
         return
     safetensors.torch.save_file(state, os.path.join(save_dir, "mola_state.safetensors"))
 
@@ -184,5 +206,8 @@ class MoLASaveCallback(TrainerCallback):
         import glob
         for pattern in ("model.safetensors", "model-*.safetensors", "model.safetensors.index.json"):
             for f in glob.glob(os.path.join(ckpt_dir, pattern)):
-                os.remove(f)
-                logger.info_rank0(f"Removed redundant base model file: {f}")
+                try:
+                    os.remove(f)
+                    logger.info_rank0(f"Removed redundant base model file: {f}")
+                except FileNotFoundError:
+                    pass

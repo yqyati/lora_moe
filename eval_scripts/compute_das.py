@@ -60,7 +60,8 @@ def collect_routing_scores(model, tokenizer, samples, max_seq_len=512, desc=""):
                 bias = getattr(module, "bias", None)
                 logits = F.linear(h, module.weight, bias)
                 scores = F.softmax(logits.float(), dim=-1)
-                score_sum[layer_idx] += scores.sum(dim=0)
+                # device_map="auto" 下,该层可能在 cuda:N 而 score_sum 在 cuda:0,需 to(device)
+                score_sum[layer_idx] += scores.sum(dim=0).to(score_sum.device)
                 token_count[layer_idx] += scores.shape[0]
             return hook
         h = mlp.gate.register_forward_pre_hook(make_hook(li))

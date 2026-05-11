@@ -1,0 +1,54 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (DAS-LoRA: Domain Advantage Score-based expert selection)
+# Qwen3-30B 上 expert MLP 形状: 2048 → 768 (gate/up_proj) → 2048 (down_proj)
+# 实测 das_lora 实现:每个 expert 注入 LoRA 在 2 个投影上(非全部 3 个)
+# 选 top-4 expert × 48 层 + rank=48:
+#   实测 18.87M @ rank=24 → 翻倍 rank=48 ≈ 37.74M (~0.126% of 30B) ✅ 对齐 RCP 40M
+# 必须先跑 DAS 计算(Qwen3 上重新做):
+#   /root/miniconda3/envs/qwen35/bin/python eval_scripts/compute_das.py \
+#       --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+#       --domain_dataset data/magicoder_oss_75k.json \
+#       --general_dataset cais/mmlu --general_config all --general_split test \
+#       --top_k 4 --max_samples 200 \
+#       --output eval_results/das_qwen3_code.json
+stage: sft
+do_train: true
+finetuning_type: das_lora
+das_lora_selected_experts_path: eval_results/das_qwen3_code.json
+das_lora_rank: 48
+das_lora_alpha: 96
+
+### dataset
+dataset: magicoder_oss_75k
+template: qwen3
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/moe_lora_code/das_lora
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: qwen3_das_lora_code
+
+### train
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 3
+learning_rate: 6.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

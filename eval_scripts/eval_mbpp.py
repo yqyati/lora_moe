@@ -124,11 +124,36 @@ def main():
         ds = ds.select(range(min(args.limit, len(ds))))
 
     # 构造 prompt
+    # 检测模型类型: Qwen3 / OLMoE / 其他
+    # tokenizer.chat_template 存在 → 用 apply_chat_template; 否则裸 prompt
+    use_chat_template = tokenizer.chat_template is not None and "qwen" in str(args.base_model).lower()
+
     prompts = []
     for sample in ds:
         task_text = sample.get("text") or sample.get("prompt")
         test_str = "\n".join(sample["test_list"][:3])
-        prompts.append(PROMPT_TEMPLATE.format(text=task_text, tests=test_str))
+        raw_prompt = PROMPT_TEMPLATE.format(text=task_text, tests=test_str)
+        if use_chat_template:
+            # Qwen3: 把 raw_prompt 当 user message,套 chat template,end with assistant 起始
+            messages = [{"role": "user", "content": raw_prompt}]
+            try:
+                # Qwen3 默认 thinking mode 会输出 <think>...</think>,占满 max_new_tokens
+                # → 强制关闭 thinking,模型直接输出代码
+                wrapped = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                # 老版 tokenizer 不支持 enable_thinking 参数
+                wrapped = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True,
+                )
+            # 在 assistant 起始后立刻接 ```python\n,引导模型直接写代码
+            if not wrapped.endswith("```python\n"):
+                wrapped = wrapped.rstrip() + "\n```python\n"
+            prompts.append(wrapped)
+        else:
+            prompts.append(raw_prompt)
 
     my_indices = list(range(local_rank, len(prompts), world_size)) if is_dist else list(range(len(prompts)))
 
