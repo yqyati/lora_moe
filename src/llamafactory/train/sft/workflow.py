@@ -155,6 +155,12 @@ def run_sft(
         trainer.add_callback(MoLASaveCallback(finetuning_args))
         trainer.callback_handler.callbacks.insert(0, MoELoRAStatsCallback())
 
+    # DAS-LoRA: 自家 save callback(stats callback 不复用,因为模块结构不同)
+    if finetuning_args.finetuning_type == "das_lora":
+        from ...model.model_utils.das_lora import DASLoRASaveCallback
+
+        trainer.add_callback(DASLoRASaveCallback(finetuning_args))
+
     # Training
     if training_args.do_train:
         train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
@@ -168,6 +174,10 @@ def run_sft(
             from ...model.model_utils.mola import save_mola_state
 
             save_mola_state(trainer.model, training_args.output_dir, finetuning_args)
+        elif finetuning_args.finetuning_type == "das_lora":
+            from ...model.model_utils.das_lora import save_das_lora_state
+
+            save_das_lora_state(trainer.model, training_args.output_dir, finetuning_args)
         else:
             trainer.save_model()
         if finetuning_args.include_effective_tokens_per_second:

@@ -1,0 +1,46 @@
+### model
+model_name_or_path: allenai/OLMoE-1B-7B-0924
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (DAS-LoRA: simplified from "Exploring Expert Concentration" ICLR'26 submission)
+# 必须先跑(用本地 JSON,和训练用同一份数据):
+#   python eval_scripts/compute_das.py \
+#       --base_model allenai/OLMoE-1B-7B-0924 \
+#       --domain_dataset data/magicoder_oss_75k.json \
+#       --general_dataset cais/mmlu --general_config all --general_split test \
+#       --top_k 4 --max_samples 200 \
+#       --output eval_results/das_code.json
+stage: sft
+do_train: true
+finetuning_type: das_lora
+das_lora_selected_experts_path: eval_results/das_code.json
+das_lora_rank: 32
+das_lora_alpha: 64
+
+### dataset
+dataset: magicoder_oss_75k
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/olmoe/moe_lora_code/das_lora_code
+logging_steps: 5
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: das_lora_code
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 2
+learning_rate: 2.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_find_unused_parameters: true

@@ -461,7 +461,7 @@ class FinetuningArguments(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
-    finetuning_type: Literal["lora", "oft", "freeze", "full", "moe_lora", "mola"] = field(
+    finetuning_type: Literal["lora", "oft", "freeze", "full", "moe_lora", "mola", "das_lora"] = field(
         default="lora",
         metadata={"help": "Which fine-tuning method to use."},
     )
@@ -525,6 +525,15 @@ class FinetuningArguments(
             "0 = disabled. Suggested starting value: 0.001."
         },
     )
+    moe_lora_hidden_bottleneck_dim: int = field(
+        default=0,
+        metadata={
+            "help": "MoE-LoRA: hidden state bottleneck dim added to routing input. "
+            "0 = disabled (vanilla V2 with 64-d MoE logits only). "
+            "When > 0, a Linear(d_model, dim) projects hidden state and concats with "
+            "router_logits before W_l. Recommended: 16. Breaks the 64-d info bottleneck."
+        },
+    )
     mola_n_experts_per_layer: str = field(
         default="8,8,8,8,12,12,12,12,20,20,20,20,24,24,24,24",
         metadata={
@@ -548,6 +557,21 @@ class FinetuningArguments(
     mola_balance_loss_coef: float = field(
         default=0.0,
         metadata={"help": "MoLA: load balance loss coefficient. 0 = disabled (MoLA paper default)."},
+    )
+    das_lora_selected_experts_path: str = field(
+        default="",
+        metadata={
+            "help": "DAS-LoRA: path to JSON file with DAS-selected experts per layer. "
+            "Generate via eval_scripts/compute_das.py."
+        },
+    )
+    das_lora_rank: int = field(
+        default=32,
+        metadata={"help": "DAS-LoRA: LoRA rank for each selected expert."},
+    )
+    das_lora_alpha: int = field(
+        default=64,
+        metadata={"help": "DAS-LoRA: LoRA alpha (scaling = alpha / rank). Convention: 2 * rank."},
     )
     use_llama_pro: bool = field(
         default=False,
@@ -657,7 +681,7 @@ class FinetuningArguments(
         self.apollo_target: list[str] = split_arg(self.apollo_target)
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
 
-        assert self.finetuning_type in ["lora", "oft", "freeze", "full", "moe_lora", "mola"], "Invalid fine-tuning method."
+        assert self.finetuning_type in ["lora", "oft", "freeze", "full", "moe_lora", "mola", "das_lora"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
 

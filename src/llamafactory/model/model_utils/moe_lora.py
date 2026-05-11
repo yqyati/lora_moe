@@ -62,18 +62,40 @@ class RoutingProjection(nn.Module):
     流程: Linear(N_E -> N_L) -> softmax
     输出: p_L in R^{..., N_L}
 
+    可选: hidden_bottleneck_dim > 0 时,从 hidden state 抽 token-specific 信号
+    与 router_logits 拼接后喂给 W_l(突破 64-d 瓶颈)。
+
     内置 entropy 监控 buffer，forward 时累加（no_grad 不影响训练）。
     """
 
-    def __init__(self, n_experts: int, n_lora: int):
+    def __init__(self, n_experts: int, n_lora: int,
+                 d_model: int = 0, hidden_bottleneck_dim: int = 0):
         super().__init__()
-        self.proj = nn.Linear(n_experts, n_lora, bias=False)
+        self.hidden_bottleneck_dim = hidden_bottleneck_dim
+        if hidden_bottleneck_dim > 0:
+            assert d_model > 0, "d_model required when hidden_bottleneck_dim > 0"
+            # 从 hidden state 抽 token-specific 信号
+            self.h_proj = nn.Linear(d_model, hidden_bottleneck_dim, bias=False)
+            input_dim = n_experts + hidden_bottleneck_dim
+        else:
+            self.h_proj = None
+            input_dim = n_experts
+        self.proj = nn.Linear(input_dim, n_lora, bias=False)
         # 监控用 buffer（long 类型不会被 .to(dtype=bfloat16) 转换）
         self.register_buffer("entropy_sum", torch.zeros(1), persistent=False)
         self.register_buffer("entropy_count", torch.zeros(1, dtype=torch.long), persistent=False)
 
-    def forward(self, router_logits: torch.Tensor) -> torch.Tensor:
-        p_L = torch.softmax(self.proj(router_logits), dim=-1)
+    def forward(self, router_logits: torch.Tensor,
+                hidden_state: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if self.h_proj is not None:
+            assert hidden_state is not None, (
+                "hidden_state required when hidden_bottleneck_dim > 0"
+            )
+            h_c = self.h_proj(hidden_state)
+            routing_input = torch.cat([router_logits, h_c], dim=-1)
+        else:
+            routing_input = router_logits
+        p_L = torch.softmax(self.proj(routing_input), dim=-1)
         with torch.no_grad():
             ent = -(p_L * torch.log(p_L + 1e-8)).sum(dim=-1).mean()
             self.entropy_sum += ent.detach()
@@ -336,7 +358,11 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
         elif routing_mode == "residual":
             p_L = self.residual_router(logits_for_lora, h_flat)
         else:
-            p_L = self.routing_projection(logits_for_lora)     # [B*T, N_L]
+            # learned: optional hidden state bottleneck
+            if getattr(self.routing_projection, "h_proj", None) is not None:
+                p_L = self.routing_projection(logits_for_lora, h_flat)
+            else:
+                p_L = self.routing_projection(logits_for_lora)     # [B*T, N_L]
         lora_output = self.lora_pool(h_flat, p_L)              # [B*T, D]
         lora_output = lora_output.reshape(b, t, d)
     else:
@@ -347,7 +373,10 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
         elif routing_mode == "residual":
             p_L = self.residual_router(logits_for_lora, hidden_states)
         else:
-            p_L = self.routing_projection(logits_for_lora)
+            if getattr(self.routing_projection, "h_proj", None) is not None:
+                p_L = self.routing_projection(logits_for_lora, hidden_states)
+            else:
+                p_L = self.routing_projection(logits_for_lora)
         lora_output = self.lora_pool(hidden_states, p_L)
 
     # 3. 相加，保持原签名
@@ -457,15 +486,19 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         # w_share 在 follow_moe 下没有意义（不创建 W），强制 per_layer 防误解
         w_share = "per_layer"
 
+    # Hidden state bottleneck(可选,默认 0 = 关闭,vanilla V2)
+    hidden_bottleneck_dim = getattr(finetuning_args, "moe_lora_hidden_bottleneck_dim", 0)
+
     # 1. 收集 MoE block + 按 target_layers 过滤
     all_moe_blocks = _find_moe_blocks(model)
     target_indices = set(_resolve_target_layer_indices(target_layers, len(all_moe_blocks)))
     moe_blocks = [b for i, b in enumerate(all_moe_blocks) if i in target_indices]
 
+    bottleneck_str = f", hidden_bottleneck={hidden_bottleneck_dim}" if hidden_bottleneck_dim > 0 else ""
     logger.info_rank0(
         f"MoE-LoRA injecting into {len(moe_blocks)}/{len(all_moe_blocks)} MoE layers | "
         f"N_E={n_experts_moe} -> N_L={n_lora} (rank={rank}, alpha={alpha}, top_k={top_k}) | "
-        f"pool_share={pool_share}, w_share={w_share}, routing_mode={routing_mode}"
+        f"pool_share={pool_share}, w_share={w_share}, routing_mode={routing_mode}{bottleneck_str}"
     )
 
     # 2. 全局共享时在 model 顶层挂一份
@@ -477,7 +510,9 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         shared_pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
         model.add_module("global_lora_pool", shared_pool)
     if w_share == "global" and routing_mode == "learned":
-        shared_proj = RoutingProjection(n_experts_moe, n_lora).to(device=device, dtype=dtype)
+        shared_proj = RoutingProjection(
+            n_experts_moe, n_lora, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
+        ).to(device=device, dtype=dtype)
         model.add_module("global_routing_projection", shared_proj)
     if w_share == "global" and routing_mode == "independent":
         shared_indep_router = IndependentRouter(d_model, n_lora).to(device=device, dtype=dtype)
@@ -491,7 +526,9 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         # RoutingProjection / IndependentRouter（follow_moe 模式下不创建任何 router）
         if routing_mode == "learned":
             if w_share == "per_layer":
-                proj = RoutingProjection(n_experts_moe, n_lora).to(device=device, dtype=dtype)
+                proj = RoutingProjection(
+                    n_experts_moe, n_lora, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
+                ).to(device=device, dtype=dtype)
                 moe_block.routing_projection = proj
             else:
                 object.__setattr__(moe_block, "routing_projection", shared_proj)
@@ -602,6 +639,7 @@ def save_moe_lora_state(
         "moe_lora_detach_p_e": finetuning_args.moe_lora_detach_p_e,
         "moe_lora_routing_mode": getattr(finetuning_args, "moe_lora_routing_mode", "learned"),
         "moe_lora_balance_loss_coef": getattr(finetuning_args, "moe_lora_balance_loss_coef", 0.0),
+        "moe_lora_hidden_bottleneck_dim": getattr(finetuning_args, "moe_lora_hidden_bottleneck_dim", 0),
         # 元信息（不属于 finetuning_args，加载时要 pop 掉）
         "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
     }

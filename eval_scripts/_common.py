@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "src"))
 
 from llamafactory.model.model_utils.moe_lora import load_moe_lora_state  # noqa: E402
 from llamafactory.model.model_utils.mola import load_mola_state  # noqa: E402
+from llamafactory.model.model_utils.das_lora import load_das_lora_state  # noqa: E402
 
 
 def common_arg_parser(description: str) -> argparse.ArgumentParser:
@@ -60,13 +61,18 @@ def load(args) -> Tuple[AutoTokenizer, AutoModelForCausalLM]:
         )
     if args.adapter_path:
         # 自动识别 adapter 类型:
+        #   有 das_lora_state.safetensors    → DAS-LoRA(自家实现)
         #   有 mola_state.safetensors        → MoLA(自家实现)
         #   有 moe_lora_state.safetensors    → MoE-LoRA(自家实现)
         #   有 adapter_config.json           → 标准 LoRA(PEFT)
+        das_state = os.path.join(args.adapter_path, "das_lora_state.safetensors")
         mola_state = os.path.join(args.adapter_path, "mola_state.safetensors")
         moe_state = os.path.join(args.adapter_path, "moe_lora_state.safetensors")
         peft_config = os.path.join(args.adapter_path, "adapter_config.json")
-        if os.path.exists(mola_state):
+        if os.path.exists(das_state):
+            print(f"Loading DAS-LoRA adapter from {args.adapter_path}")
+            model = load_das_lora_state(model, args.adapter_path)
+        elif os.path.exists(mola_state):
             print(f"Loading MoLA adapter from {args.adapter_path}")
             model = load_mola_state(model, args.adapter_path)
         elif os.path.exists(moe_state):
@@ -79,8 +85,8 @@ def load(args) -> Tuple[AutoTokenizer, AutoModelForCausalLM]:
             model = model.merge_and_unload()  # 合并 LoRA 到 base 权重,推理更快
         else:
             raise FileNotFoundError(
-                f"{args.adapter_path} 既无 mola_state.safetensors / moe_lora_state.safetensors "
-                f"也无 adapter_config.json,无法识别 adapter 类型"
+                f"{args.adapter_path} 既无 das_lora_state.safetensors / mola_state.safetensors / "
+                f"moe_lora_state.safetensors 也无 adapter_config.json,无法识别 adapter 类型"
             )
     else:
         print("No --adapter_path provided, evaluating BASE model")

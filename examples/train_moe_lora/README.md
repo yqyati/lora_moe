@@ -42,14 +42,14 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
 
 torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/baseline2_independent \
-    --batch_size 64 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora/v2_enhanced_h16 \
+    --batch_size 512 \
     --max_new_tokens 512
 
 # 评估 MATH-500
 torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/v2_global_pool128_best \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora/v2_enhanced_h16 \
     --batch_size 64 \
     --max_new_tokens 512
 
@@ -57,14 +57,14 @@ torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
 # 评估 MBPP（代码生成）
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora_code/stdlora_r64 \
-    --batch_size 64 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_code/v2_enhanced_h16 \
+    --batch_size 512 \
     --max_new_tokens 512
 
 # 评估 HumanEval（代码生成，需先 pip install human-eval）
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora_code/stdlora_r64 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_code/v2_enhanced_h16  \
     --batch_size 64 \
     --max_new_tokens 512\
     --chat_mode \
@@ -209,8 +209,8 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
 # 评估领域微调后的通用能力
 torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path saves/olmoe/moe_lora/vbase_follow_moe \
-    --benchmark PIQA \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_code/v2_enhanced_h16  \
+    --benchmark all \
     --batch_size 512 \
     --save_path eval_results/baseline2.jsonl
 
