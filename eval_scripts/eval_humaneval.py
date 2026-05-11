@@ -144,11 +144,30 @@ def main():
 
     raw_prompts = [v["prompt"] for _, v in items]
     if args.chat_mode:
-        # 包成 LlamaFactory default template 对齐训练分布
-        gen_prompts = [
-            wrap_default_chat(tokenizer, _USER_MSG_TEMPLATE.format(prompt=p))
-            for p in raw_prompts
-        ]
+        # 自动检测 Qwen3:用 Qwen3 chat template + 关闭 thinking
+        is_qwen3 = (
+            tokenizer.chat_template is not None
+            and "qwen" in str(args.base_model).lower()
+        )
+        if is_qwen3:
+            def _wrap_qwen3(p):
+                msgs = [{"role": "user", "content": _USER_MSG_TEMPLATE.format(prompt=p)}]
+                try:
+                    return tokenizer.apply_chat_template(
+                        msgs, tokenize=False, add_generation_prompt=True,
+                        enable_thinking=False,
+                    )
+                except TypeError:
+                    return tokenizer.apply_chat_template(
+                        msgs, tokenize=False, add_generation_prompt=True,
+                    )
+            gen_prompts = [_wrap_qwen3(p) for p in raw_prompts]
+        else:
+            # OLMoE / 其他默认: 用 LlamaFactory default template
+            gen_prompts = [
+                wrap_default_chat(tokenizer, _USER_MSG_TEMPLATE.format(prompt=p))
+                for p in raw_prompts
+            ]
     else:
         gen_prompts = raw_prompts
 

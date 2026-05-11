@@ -223,7 +223,13 @@ class LoRAPool(nn.Module):
             one_hot.scatter_(1, topk_idx.reshape(int(n_tokens_f), self.top_k), 1.0)
             f = one_hot.mean(dim=0)
             p = p_L_orig.reshape(int(n_tokens_f), -1).mean(dim=0)
-            self._aux_loss = self.n_experts * (f * p).sum()
+            current_aux = self.n_experts * (f * p).sum()
+            # 多层共享同一 pool 时(global / grouped pool 默认情形),累加每层贡献
+            # 而非覆盖,否则 balance loss 只反映最后一层的状态
+            if getattr(self, "_aux_loss", None) is not None:
+                self._aux_loss = self._aux_loss + current_aux
+            else:
+                self._aux_loss = current_aux
         else:
             self._aux_loss = None
 
@@ -496,27 +502,60 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     # Hidden state bottleneck(可选,默认 0 = 关闭,vanilla V2)
     hidden_bottleneck_dim = getattr(finetuning_args, "moe_lora_hidden_bottleneck_dim", 0)
 
+    # Hierarchical/Grouped Pool(可选,默认 1 = 单一 global pool)
+    n_groups = getattr(finetuning_args, "moe_lora_n_groups", 1)
+
     # 1. 收集 MoE block + 按 target_layers 过滤
     all_moe_blocks = _find_moe_blocks(model)
     target_indices = set(_resolve_target_layer_indices(target_layers, len(all_moe_blocks)))
     moe_blocks = [b for i, b in enumerate(all_moe_blocks) if i in target_indices]
 
+    # n_groups 校验
+    if n_groups > 1:
+        if pool_share != "global":
+            raise ValueError(f"n_groups={n_groups} requires pool_share='global', got '{pool_share}'.")
+        if n_lora % n_groups != 0:
+            raise ValueError(f"n_lora={n_lora} must be divisible by n_groups={n_groups}.")
+        if len(moe_blocks) % n_groups != 0:
+            logger.warning_rank0(
+                f"layer_count={len(moe_blocks)} not divisible by n_groups={n_groups}; "
+                "groups will be slightly unbalanced."
+            )
+
+    n_lora_per_group = n_lora // n_groups  # = n_lora when n_groups=1
+
     bottleneck_str = f", hidden_bottleneck={hidden_bottleneck_dim}" if hidden_bottleneck_dim > 0 else ""
+    groups_str = f", n_groups={n_groups} (n_lora_per_group={n_lora_per_group})" if n_groups > 1 else ""
     logger.info_rank0(
         f"MoE-LoRA injecting into {len(moe_blocks)}/{len(all_moe_blocks)} MoE layers | "
         f"N_E={n_experts_moe} -> N_L={n_lora} (rank={rank}, alpha={alpha}, top_k={top_k}) | "
-        f"pool_share={pool_share}, w_share={w_share}, routing_mode={routing_mode}{bottleneck_str}"
+        f"pool_share={pool_share}, w_share={w_share}, routing_mode={routing_mode}{bottleneck_str}{groups_str}"
     )
 
-    # 2. 全局共享时在 model 顶层挂一份
-    shared_pool = None
+    # 2. 全局共享时在 model 顶层挂 pool(支持 grouped pool: n_groups > 1 时挂多个)
+    shared_pool = None         # n_groups=1 时使用
+    grouped_pools = None       # n_groups>1 时使用,长度 n_groups
     shared_proj = None
     shared_indep_router = None
     shared_residual_router = None
+
     if pool_share == "global":
-        shared_pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
-        model.add_module("global_lora_pool", shared_pool)
+        if n_groups == 1:
+            # 单一 global pool(原始行为)
+            shared_pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
+            model.add_module("global_lora_pool", shared_pool)
+        else:
+            # Grouped Pool: n_groups 个独立 LoRAPool,每个有 n_lora_per_group 个 expert
+            grouped_pools = []
+            for g in range(n_groups):
+                pool = LoRAPool(n_lora_per_group, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
+                model.add_module(f"global_lora_pool_g{g}", pool)
+                grouped_pools.append(pool)
+
     if w_share == "global" and routing_mode == "learned":
+        # global w_share 不支持 grouped(每层 W_l 必须独立才能路由到自己组)
+        if n_groups > 1:
+            raise ValueError("w_share='global' is incompatible with n_groups>1; use w_share='per_layer'.")
         shared_proj = RoutingProjection(
             n_experts_moe, n_lora, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
         ).to(device=device, dtype=dtype)
@@ -529,25 +568,31 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         model.add_module("global_residual_router", shared_residual_router)
 
     # 3. 给每个 MoE block 挂模块 + monkey-patch forward
-    for moe_block in moe_blocks:
-        # RoutingProjection / IndependentRouter（follow_moe 模式下不创建任何 router）
+    for layer_idx, moe_block in enumerate(moe_blocks):
+        # 计算该层属于哪个 group(n_groups=1 时永远是 0)
+        group_idx = layer_idx * n_groups // len(moe_blocks)
+
+        # RoutingProjection / IndependentRouter (follow_moe 模式下不创建任何 router)
+        # 注意: grouped pool 时 W_l 输出维度是 n_lora_per_group(而非 n_lora)
+        proj_out_dim = n_lora_per_group  # n_groups=1 时等于 n_lora
+
         if routing_mode == "learned":
             if w_share == "per_layer":
                 proj = RoutingProjection(
-                    n_experts_moe, n_lora, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
+                    n_experts_moe, proj_out_dim, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
                 ).to(device=device, dtype=dtype)
                 moe_block.routing_projection = proj
             else:
                 object.__setattr__(moe_block, "routing_projection", shared_proj)
         elif routing_mode == "independent":
             if w_share == "per_layer":
-                indep_router = IndependentRouter(d_model, n_lora).to(device=device, dtype=dtype)
+                indep_router = IndependentRouter(d_model, proj_out_dim).to(device=device, dtype=dtype)
                 moe_block.independent_router = indep_router
             else:
                 object.__setattr__(moe_block, "independent_router", shared_indep_router)
         elif routing_mode == "residual":
             if w_share == "per_layer":
-                res_router = ResidualRouter(n_experts_moe, d_model, n_lora).to(device=device, dtype=dtype)
+                res_router = ResidualRouter(n_experts_moe, d_model, proj_out_dim).to(device=device, dtype=dtype)
                 moe_block.residual_router = res_router
             else:
                 object.__setattr__(moe_block, "residual_router", shared_residual_router)
@@ -556,8 +601,11 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         if pool_share == "per_layer":
             pool = LoRAPool(n_lora, d_model, rank, alpha, top_k).to(device=device, dtype=dtype)
             moe_block.lora_pool = pool
+        elif n_groups > 1:
+            # Grouped pool: 该层指向所属 group 的 pool
+            object.__setattr__(moe_block, "lora_pool", grouped_pools[group_idx])
         else:
-            # 同上理由，避免 shared_pool 在 state_dict 里出现 17 份。
+            # 单一 global pool
             object.__setattr__(moe_block, "lora_pool", shared_pool)
 
         # monkey-patch forward
@@ -671,6 +719,7 @@ def save_moe_lora_state(
         "moe_lora_routing_mode": getattr(finetuning_args, "moe_lora_routing_mode", "learned"),
         "moe_lora_balance_loss_coef": getattr(finetuning_args, "moe_lora_balance_loss_coef", 0.0),
         "moe_lora_hidden_bottleneck_dim": getattr(finetuning_args, "moe_lora_hidden_bottleneck_dim", 0),
+        "moe_lora_n_groups": getattr(finetuning_args, "moe_lora_n_groups", 1),
         "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
     }
     with open(os.path.join(save_dir, "moe_lora_config.json"), "w") as f:

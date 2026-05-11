@@ -534,6 +534,17 @@ class FinetuningArguments(
             "router_logits before W_l. Recommended: 16. Breaks the 64-d info bottleneck."
         },
     )
+    moe_lora_n_groups: int = field(
+        default=1,
+        metadata={
+            "help": "MoE-LoRA: number of groups for Hierarchical Pool. "
+            "1 = single global pool (default,适合浅层模型如 OLMoE 16 层). "
+            ">1 = split layers into N groups,each group has its own LoRA pool. "
+            "适合深层模型(如 Qwen3 48 层),减弱 cross-layer gradient conflict. "
+            "需保证 n_lora 和 layer_count 都能被 n_groups 整除。"
+            "示例: 48 层 + n_groups=3 → layer 0-15/16-31/32-47 各占一组。"
+        },
+    )
     mola_n_experts_per_layer: str = field(
         default="8,8,8,8,12,12,12,12,20,20,20,20,24,24,24,24",
         metadata={

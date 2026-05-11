@@ -70,13 +70,24 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
 
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/das_lora \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/rcp_h16 \
     --batch_size 512 \
     --max_new_tokens 512
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
     --batch_size 512 \
     --max_new_tokens 512
+
+torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
+    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/das_lora \
+    --batch_size 64 \
+    --max_new_tokens 512 \
+    --chat_mode \
+    --num_samples 3 --k 1 --temperature 0.2 \
+    --save_path /tmp/humaneval_debug.jsonl 
+
+
 # 评估 HumanEval（代码生成，需先 pip install human-eval）
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
