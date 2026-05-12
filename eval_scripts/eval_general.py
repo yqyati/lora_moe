@@ -38,7 +38,7 @@ from tqdm import tqdm
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _THIS_DIR)
-from _common import common_arg_parser, load
+from _common import common_arg_parser, load, wrap_for_model
 
 
 # ─── 数据集加载与格式化 ────────────────────────────────────────────────────────
@@ -370,6 +370,8 @@ def evaluate_benchmark(model, tokenizer, benchmark_name, samples, args, is_main,
         for idx in batch_idx:
             sample = samples[idx]
             prompt = format_prompt(sample)
+            # Qwen3: 套 chat template + 关闭 thinking; OLMoE: 原样返回 plain prompt。
+            prompt = wrap_for_model(tokenizer, prompt, args.base_model)
             choices = sample["labels"]
 
             logprobs = compute_choice_logprobs(model, tokenizer, prompt, choices)
@@ -388,6 +390,7 @@ def evaluate_benchmark(model, tokenizer, benchmark_name, samples, args, is_main,
 
     # gather
     if is_dist:
+        torch.cuda.empty_cache()  # 释放 likelihood 计算留下的 KV cache,给 NCCL 留 buffer
         gathered = [None] * world_size
         dist.all_gather_object(gathered, my_records)
         records = [r for sub in gathered for r in sub]

@@ -130,6 +130,36 @@ def wrap_default_chat(tokenizer, user_content: str) -> str:
     return f"Human: {user_content}{eos}\nAssistant:"
 
 
+def wrap_for_model(tokenizer, user_content: str, base_model: str) -> str:
+    """根据 base model 自动选择 chat template 包装方式。
+
+    - Qwen3 (base_model 含 'qwen' 且 tokenizer 有 chat_template):
+      用 Qwen3 chat template + enable_thinking=False (避免 <think> 占满 max_new_tokens)。
+    - 其他 (OLMoE 等):
+      原样返回 plain prompt,保持向后兼容,不影响既有数字。
+
+    LlamaFactory 训练时 `template: qwen3` 与 tokenizer 自带 chat_template 对齐,
+    所以推理端 apply_chat_template 与训练分布一致。
+    """
+    is_qwen3 = (
+        tokenizer.chat_template is not None
+        and "qwen" in str(base_model).lower()
+    )
+    if not is_qwen3:
+        return user_content
+    messages = [{"role": "user", "content": user_content}]
+    try:
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False,
+        )
+    except TypeError:
+        # 老版 transformers 不支持 enable_thinking 参数
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+        )
+
+
 def extract_gsm8k_answer(text: str):
     """GSM8K 标准答案抽取(强化版):
     - 优先 #### 后的数字

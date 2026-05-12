@@ -56,7 +56,7 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
 # 评估 MATH-500
 torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_new/v2_enhanced_rank128 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_new/baseline2_moelora_math \
     --batch_size 64 \
     --max_new_tokens 512
 
@@ -68,9 +68,21 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --batch_size 512 \
     --max_new_tokens 512
 
+torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
+    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora/baseline2_moelora_math \
+    --batch_size 64 \
+    --max_new_tokens 512
+
+torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
+    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora/baseline2_moelora_math \
+    --batch_size 32 \
+    --max_new_tokens 512
+
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/baseline1_follow_moe \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/baseline2_moelora_math \
     --batch_size 512 \
     --max_new_tokens 512
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \

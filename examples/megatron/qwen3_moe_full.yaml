@@ -33,3 +33,4 @@ moe_grouped_gemm: true
 moe_token_dispatcher_type: alltoall
 expert_model_parallel_size: 2
 recompute_granularity: full
+save_only_model: true

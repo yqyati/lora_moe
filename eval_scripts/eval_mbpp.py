@@ -181,6 +181,7 @@ def main():
             })
 
     if is_dist:
+        torch.cuda.empty_cache()  # 释放 generate 留下的 KV cache,给 NCCL 留 buffer
         gathered = [None] * world_size
         dist.all_gather_object(gathered, my_records)
         records = [r for sub in gathered for r in sub]

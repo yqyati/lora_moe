@@ -36,7 +36,7 @@ logging_steps: 5
 save_steps: 100
 plot_loss: true
 overwrite_output_dir: true
-save_only_model: false
+save_only_model: true
 report_to: wandb
 run_name: qwen3_das_lora_math
 

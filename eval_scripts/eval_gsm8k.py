@@ -20,7 +20,7 @@ import torch.distributed as dist
 from datasets import load_dataset
 from tqdm import tqdm
 
-from _common import common_arg_parser, load, generate_batch, extract_gsm8k_answer
+from _common import common_arg_parser, load, generate_batch, extract_gsm8k_answer, wrap_for_model
 
 
 PROMPT_TEMPLATE = (
@@ -47,7 +47,7 @@ def main():
     if args.limit:
         ds = ds.select(range(min(args.limit, len(ds))))
 
-    prompts = [PROMPT_TEMPLATE.format(question=s["question"]) for s in ds]
+    prompts = [wrap_for_model(tokenizer, PROMPT_TEMPLATE.format(question=s["question"]), args.base_model) for s in ds]
     golds = [extract_gsm8k_answer(s["answer"]) for s in ds]
 
     # 每个 rank 处理 [rank, rank+world_size, rank+2*world_size, ...] 这一切片，
@@ -77,6 +77,7 @@ def main():
 
     # 收集所有 rank 的 records 到 rank 0
     if is_dist:
+        torch.cuda.empty_cache()  # 释放 generate 留下的 KV cache,给 NCCL 留 buffer
         gathered = [None] * world_size
         dist.all_gather_object(gathered, my_records)
         records = [r for sub in gathered for r in sub]

@@ -29,7 +29,7 @@ logging_steps: 5
 save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
-save_only_model: false
+save_only_model: true
 report_to: wandb
 run_name: code_v1_per_layer
 

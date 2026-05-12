@@ -22,7 +22,7 @@ import torch.distributed as dist
 from datasets import load_dataset
 from tqdm import tqdm
 
-from _common import common_arg_parser, load, generate_batch
+from _common import common_arg_parser, load, generate_batch, wrap_for_model
 
 
 PROMPT_TEMPLATE = (
@@ -99,7 +99,7 @@ def main():
     if args.limit:
         ds = ds.select(range(min(args.limit, len(ds))))
 
-    prompts = [PROMPT_TEMPLATE.format(problem=s["problem"]) for s in ds]
+    prompts = [wrap_for_model(tokenizer, PROMPT_TEMPLATE.format(problem=s["problem"]), args.base_model) for s in ds]
 
     my_indices = list(range(local_rank, len(prompts), world_size)) if is_dist else list(range(len(prompts)))
 
@@ -126,6 +126,7 @@ def main():
             })
 
     if is_dist:
+        torch.cuda.empty_cache()  # 释放 generate 留下的 KV cache,给 NCCL 留 buffer
         gathered = [None] * world_size
         dist.all_gather_object(gathered, my_records)
         records = [r for sub in gathered for r in sub]

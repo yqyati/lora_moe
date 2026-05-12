@@ -29,7 +29,7 @@ logging_steps: 5
 save_steps: 500
 plot_loss: true
 overwrite_output_dir: true
-save_only_model: false
+save_only_model: true
 report_to: wandb       # 强烈建议 wandb，监控 dead_experts / activation_imbalance / W_fro_norm / p_L_entropy
 run_name: v1_per_layer
 

@@ -31,7 +31,7 @@ logging_steps: 10
 save_steps: 500
 plot_loss: true
 overwrite_output_dir: true
-save_only_model: false
+save_only_model: true
 report_to: wandb
 run_name: math_baseline1_rank8
 
