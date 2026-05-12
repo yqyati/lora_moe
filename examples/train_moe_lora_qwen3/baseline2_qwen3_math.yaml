@@ -1,0 +1,52 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (baseline2: MoELoRA — per_layer pool + 独立 router)
+# 标准 MoELoRA 结构:每层独立 LoRA pool + 独立 router(从 hidden state 学)
+# Qwen3 48 层。参数:48 × n_experts × 2(A,B) × rank × 2048 + 独立 router(48 × 2048 × n_exp)
+# rank=6, n_experts=16 → 48 × 16 × 2 × 6 × 2048 = 37.75M + router 1.57M ≈ 39.32M (~0.131%) ✅
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 16
+moe_lora_rank: 6
+moe_lora_alpha: 12                        # 2 × rank
+moe_lora_top_k: 2
+moe_lora_pool_share: per_layer
+moe_lora_w_share: per_layer               # independent 模式下被忽略
+moe_lora_target_layers: all
+moe_lora_routing_mode: independent        # MoELoRA-style 独立 router
+
+### dataset
+dataset: metamathqa_r1
+template: qwen3
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/moe_lora/baseline2_moelora_math
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: qwen3_baseline2_math
+
+### train
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 3
+learning_rate: 6.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

@@ -1,0 +1,43 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (FFT: 全参数微调,作为性能上界参考)
+stage: sft
+do_train: true
+finetuning_type: full
+
+### dataset
+dataset: metamathqa_r1
+template: qwen3
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/fft_math/fft_qwen3
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: wandb
+run_name: qwen3_fft_math
+
+### train
+# FFT 30B 模型显存压力极大,必须 ZeRO-3 + bf16 + grad_checkpointing
+# 8× H800: 30B × 2(bf16) / 8 = 7.5GB params/卡 + 优化器状态 + 激活
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 64
+learning_rate: 5.0e-5
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json
+ddp_timeout: 180000000

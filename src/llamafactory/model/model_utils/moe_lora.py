@@ -217,19 +217,17 @@ class LoRAPool(nn.Module):
             self.total_tokens += n_tokens
 
         # load balancing loss: L = N * Σ(f_i * p_i)
+        # 注意: 多层共享同一 LoRAPool 时(global / grouped pool 默认),后续层会
+        # 覆盖前面层的 _aux_loss,实际只反映"本 batch 最后一层"的 balance 信号。
+        # 这是历史行为(OLMoE 训练时如此),保留以便复现。
+        # 累加版会让 balance loss 数量级 ≈ layers_per_pool× 放大,需要相应调整 coef。
         if self.training:
             n_tokens_f = float(h.shape[0]) if h.dim() == 2 else float(h.shape[0] * h.shape[1])
             one_hot = torch.zeros(int(n_tokens_f), self.n_experts, device=h.device, dtype=p_L_orig.dtype)
             one_hot.scatter_(1, topk_idx.reshape(int(n_tokens_f), self.top_k), 1.0)
             f = one_hot.mean(dim=0)
             p = p_L_orig.reshape(int(n_tokens_f), -1).mean(dim=0)
-            current_aux = self.n_experts * (f * p).sum()
-            # 多层共享同一 pool 时(global / grouped pool 默认情形),累加每层贡献
-            # 而非覆盖,否则 balance loss 只反映最后一层的状态
-            if getattr(self, "_aux_loss", None) is not None:
-                self._aux_loss = self._aux_loss + current_aux
-            else:
-                self._aux_loss = current_aux
+            self._aux_loss = self.n_experts * (f * p).sum()
         else:
             self._aux_loss = None
 
@@ -862,10 +860,29 @@ class MoELoRAStatsCallback(TrainerCallback):
         indep_routers = [(n, m) for n, m in model.named_modules() if isinstance(m, IndependentRouter)]
 
         # ① 激活频率
+        # 跨 rank 聚合 activation_count / total_tokens,否则每个 rank 只看到 1/N batch,
+        # 真实非 dead 的 expert 可能在本 rank 上看起来 dead → dead_experts 严重高估
+        try:
+            import torch.distributed as dist
+            _dist_ok = dist.is_available() and dist.is_initialized()
+        except Exception:
+            _dist_ok = False
+
         for name, pool in pools:
-            if pool.total_tokens.item() == 0:
+            if _dist_ok:
+                # all_reduce sum 到所有 rank(in-place),拿到全局真实计数
+                # 用 clone 避免改 buffer 本身(后续还要 zero_)
+                act_global = pool.activation_count.clone().to(torch.long)
+                tot_global = pool.total_tokens.clone().to(torch.long)
+                dist.all_reduce(act_global, op=dist.ReduceOp.SUM)
+                dist.all_reduce(tot_global, op=dist.ReduceOp.SUM)
+            else:
+                act_global = pool.activation_count
+                tot_global = pool.total_tokens
+
+            if tot_global.item() == 0:
                 continue
-            freq = pool.activation_count.float() / pool.total_tokens.float()
+            freq = act_global.float() / tot_global.float()
             ideal = pool.top_k / pool.n_experts
             logs[f"moe_lora/{name}/activation_max"] = freq.max().item()
             logs[f"moe_lora/{name}/activation_min"] = freq.min().item()
@@ -875,12 +892,17 @@ class MoELoRAStatsCallback(TrainerCallback):
             try:
                 import wandb
                 if wandb.run is not None:
-                    wandb.log({
-                        f"moe_lora/{name}/activation_freq": wandb.Histogram(freq.cpu().numpy()),
-                        f"moe_lora/{name}/lifetime_activation": wandb.Histogram(
-                            pool.lifetime_activation_count.float().cpu().numpy()
-                        ),
-                    }, commit=False)
+                    # wandb.Histogram 在所有值相同时(早期训练 freq 全 0)会崩
+                    # → 用 try 兜底,数据无效就跳过 histogram
+                    try:
+                        wandb.log({
+                            f"moe_lora/{name}/activation_freq": wandb.Histogram(freq.cpu().numpy()),
+                            f"moe_lora/{name}/lifetime_activation": wandb.Histogram(
+                                pool.lifetime_activation_count.float().cpu().numpy()
+                            ),
+                        }, commit=False)
+                    except (ValueError, RuntimeError):
+                        pass
             except ImportError:
                 pass
             pool.activation_count.zero_()

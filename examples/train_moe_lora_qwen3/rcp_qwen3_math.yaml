@@ -28,6 +28,7 @@ moe_lora_hidden_bottleneck_dim: 32
 dataset: metamathqa_r1
 template: qwen3
 cutoff_len: 2048
+max_samples: 80000
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
 

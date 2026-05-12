@@ -70,7 +70,7 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
 
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/rcp_h16 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/baseline1_follow_moe \
     --batch_size 512 \
     --max_new_tokens 512
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
@@ -80,7 +80,7 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
 
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/das_lora \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/baseline1_follow_moe \
     --batch_size 64 \
     --max_new_tokens 512 \
     --chat_mode \

@@ -16,15 +16,15 @@ use_reentrant_gc: false
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 1024
+moe_lora_n_experts: 512
 moe_lora_n_groups: 4              # ⭐ Hierarchical Pool,4 组 × 256 LoRA/组
-moe_lora_rank: 8
-moe_lora_alpha: 16
-moe_lora_top_k: 4
+moe_lora_rank: 16
+moe_lora_alpha: 32
+moe_lora_top_k: 8
 moe_lora_pool_share: global
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
-moe_lora_balance_loss_coef: 0.0001
+#moe_lora_balance_loss_coef:  0.0001
 moe_lora_hidden_bottleneck_dim: 32
 
 ### dataset
