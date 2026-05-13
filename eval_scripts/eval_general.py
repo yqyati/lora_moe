@@ -43,7 +43,8 @@ from _common import common_arg_parser, load, wrap_for_model
 
 # ─── 数据集加载与格式化 ────────────────────────────────────────────────────────
 
-BENCHMARKS = ["commonsenseqa", "arc_challenge", "strategyqa", "hellaswag", "winogrande", "ceval", "mmlu"]
+BENCHMARKS = ["commonsenseqa", "arc_challenge", "strategyqa", "winogrande", "mmlu"]
+# (hellaswag / ceval 暂时移出 --benchmark all 列表;LOADER_MAP 保留 loader,需要时可手动 --benchmark hellaswag 跑)
 
 
 def load_commonsenseqa(limit=None):
@@ -369,9 +370,12 @@ def evaluate_benchmark(model, tokenizer, benchmark_name, samples, args, is_main,
         batch_idx = my_indices[i : i + args.batch_size]
         for idx in batch_idx:
             sample = samples[idx]
+            # Likelihood-based 评估对所有 model 都走 plain prompt(LM eval harness 标准做法)。
+            # 不要套 chat template:对 Qwen3,chat template 包装会让 prompt 末尾的 "Answer:"
+            # 出现在 user message 末尾 + assistant 起始有 <think></think> 块,导致 choice
+            # token 的 logprob 计算严重失真(MMLU 跌到接近随机 0.36,Qwen3 base 应 0.75+)。
+            # OLMoE 路径删除前后 byte-for-byte 一致(wrap_for_model 对 OLMoE 走 passthrough)。
             prompt = format_prompt(sample)
-            # Qwen3: 套 chat template + 关闭 thinking; OLMoE: 原样返回 plain prompt。
-            prompt = wrap_for_model(tokenizer, prompt, args.base_model)
             choices = sample["labels"]
 
             logprobs = compute_choice_logprobs(model, tokenizer, prompt, choices)

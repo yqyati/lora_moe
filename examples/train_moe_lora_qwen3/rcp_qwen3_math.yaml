@@ -3,25 +3,28 @@ model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B
 trust_remote_code: true
 use_reentrant_gc: false
 
-### method (RCP = routing projection + hidden state bottleneck)
+### method (RCP + Hierarchical Pool) — math domain
 # Qwen3-30B-A3B: 48 层, N_E=128, top-8 routing, hidden=2048
-# 等比例对齐 OLMoE: N_L=512(×2), d_b=32(×2), rank=16
+# Hierarchical/Grouped Pool: 48 层分 4 组,每组 12 层 + 256 LoRA experts
+# (256/group 与 OLMoE 的 N_L=256 完全对齐,12 layers/group < OLMoE 16 layers)
+# 减弱跨层 gradient conflict + 避开 grouped_mm 1024-group kernel 上限
 # 参数估算:
-#   W_l (per-layer):  48 × 160 × 512 = 3.93M (input dim = 128 + 32 augment)
+#   LoRA pool (4 groups × 256 = 1024 LoRAs): 1024 × 2 × 8 × 2048 = 33.55M
+#   W_l (per-layer): 48 × 160 × 256 = 1.97M (output dim = n_lora_per_group)
 #   h_proj (per-layer): 48 × 2048 × 32 = 3.15M
-#   LoRA pool (rank=16, global): 512 × 2 × 16 × 2048 = 33.55M
-#   总 trainable ≈ 40.63M (~ 0.135% of 30B,与 OLMoE 0.131% 对齐)
+#   总 trainable ≈ 38.67M (~ 0.129% of 30B,与 OLMoE 0.131% 对齐)
 stage: sft
 do_train: true
 finetuning_type: moe_lora
 moe_lora_n_experts: 512
+moe_lora_n_groups: 4              # ⭐ Hierarchical Pool,4 组 × 256 LoRA/组
 moe_lora_rank: 16
 moe_lora_alpha: 32
-moe_lora_top_k: 4
+moe_lora_top_k: 8
 moe_lora_pool_share: global
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
-moe_lora_balance_loss_coef: 0.0001
+#moe_lora_balance_loss_coef:  0.0001
 moe_lora_hidden_bottleneck_dim: 32
 
 ### dataset
