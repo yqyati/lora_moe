@@ -1,0 +1,53 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (DAS-LoRA — DeepSeek-V2-Lite, code)
+# 选 top-4 DAS expert per layer,挂 LoRA。
+# 必须先跑 DAS 计算(见下面命令)生成 das_deepseek_v2_lite_code.json。
+#
+# DAS 计算命令:
+# /root/miniconda3/envs/qwen35/bin/python eval_scripts/compute_das.py \
+#     --base_model /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
+#     --domain_dataset data/magicoder_oss_75k.json \
+#     --general_dataset cais/mmlu --general_config all --general_split test \
+#     --top_k 4 --max_samples 200 \
+#     --output eval_results/das_deepseek_v2_lite_code.json
+stage: sft
+do_train: true
+finetuning_type: das_lora
+das_selected_experts_path: eval_results/das_deepseek_v2_lite_code.json
+das_lora_rank: 28
+das_lora_alpha: 56
+das_lora_top_k_experts: 4
+
+### dataset
+dataset: magicoder_oss_75k
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora_code/das_lora
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_das_lora_code
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

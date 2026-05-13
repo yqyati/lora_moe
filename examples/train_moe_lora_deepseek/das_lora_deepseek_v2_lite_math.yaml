@@ -1,0 +1,63 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (DAS-LoRA — DeepSeek-V2-Lite, math)
+# 选 top-4 DAS expert per layer,挂 LoRA 在它们上。
+# 必须先跑 DAS 计算(见下面命令)生成 das_deepseek_v2_lite_math.json。
+#
+# DAS 计算命令:
+# /root/miniconda3/envs/qwen35/bin/python eval_scripts/compute_das.py \
+#     --base_model /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
+#     --domain_dataset data/metamathqa_r1_clean.json \
+#     --general_dataset cais/mmlu --general_config all --general_split test \
+#     --top_k 4 --max_samples 200 \
+#     --output eval_results/das_deepseek_v2_lite_math.json
+#
+# DeepSeek-V2-Lite expert MLP 形状: 2048 → 1408 (gate/up) → 2048 (down)
+# 实测 LlamaFactory das_lora 在 2 个 proj 上注入 LoRA。
+#
+# 参数估算(top_k=4, rank=36):
+#   per (layer, selected expert, proj): rank × (2048+1408) = 36 × 3456 = 0.12M
+#   per (layer, selected expert): 2 proj × 0.12M = 0.24M
+#   total: 26 layers × 4 experts × 0.24M ≈ 25M (略偏大,可接受)
+#   若想严格 19M,改 rank=28
+stage: sft
+do_train: true
+finetuning_type: das_lora
+das_selected_experts_path: eval_results/das_deepseek_v2_lite_math.json
+das_lora_rank: 28                       # 调到 19M 量级
+das_lora_alpha: 56
+das_lora_top_k_experts: 4
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/das_lora_math
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_das_lora_math
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

@@ -1,0 +1,59 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (MoELoRA / baseline2 — DeepSeek-V2-Lite, math)
+# Independent gate + per_layer pool,从 hidden state 学独立 router。
+# 跟 RCP 的核心区别: routing 从零学,不利用 base MoE router 信号。
+#
+# 参数估算:
+#   LoRA pool (per_layer, n_experts=16, rank=6): 26 × 16 × 2 × 6 × 2048 = 9.83M
+#   Independent gate (per_layer): 26 × 2048 × 16 = 0.85M
+#   总 ≈ 10.68M(若 + h_proj 32 维 augment: ~12M)
+#
+# 注: 实际跑出来的参数预算会偏小,因为 baseline2 没有 W_l/h_proj 等开销。
+# 若想严格对齐 RCP 19M,可把 rank 调到 12 或 n_experts 调到 24。
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 16
+moe_lora_rank: 12                     # 调大 rank 让总参数接近 RCP 19M
+moe_lora_alpha: 24
+moe_lora_top_k: 2
+moe_lora_pool_share: per_layer
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_routing_mode: independent    # ⭐ MoELoRA-style 独立 router
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/baseline2_moelora_math
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_baseline2_math
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

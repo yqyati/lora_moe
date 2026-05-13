@@ -46,7 +46,10 @@ logger = logging.get_logger(__name__)
 SUPPORTED_MOE_BLOCK_NAMES = {
     "OlmoeSparseMoeBlock",        # OLMoE
     "Qwen3MoeSparseMoeBlock",     # Qwen3-MoE
-    "DeepseekV2MoE",              # DeepSeek-V2
+    "DeepseekV2MoE",              # DeepSeek-V2 (custom modeling_deepseek.py)
+    "DeepseekV2Moe",              # DeepSeek-V2 (transformers 5.x native, 注意大小写)
+    "DeepseekV3MoE",              # DeepSeek-V3 (custom)
+    "DeepseekV3Moe",              # DeepSeek-V3 (transformers 5.x native)
 }
 
 

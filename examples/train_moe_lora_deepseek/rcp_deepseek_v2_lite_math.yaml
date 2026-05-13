@@ -1,0 +1,65 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true                # ⭐ DeepSeek 用 custom modeling code
+use_reentrant_gc: false
+
+### method (RCP — DeepSeek-V2-Lite, math domain)
+# DeepSeek-V2-Lite: 27 层(layer 0 dense + layer 1-26 MoE)
+#   N_E=64 routed expert + 2 shared expert (always-on, frozen for PEFT)
+#   Top-k routed=6, MLA attention, hidden=2048, moe_intermediate=1408
+#
+# Fairness boundary(跟其他 PEFT 一致):
+#   - Layer 0 dense FFN 自动跳过(_find_moe_blocks 类型检测)
+#   - Shared expert 不参与 routing,自动不挂 LoRA
+#   - Base router 完全 frozen,只读 router_logits 作 W_l 输入
+#
+# 参数估算:
+#   LoRA pool (N_L=256, rank=16, global): 256 × 2 × 16 × 2048 = 16.78M
+#   W_l (per-layer): 26 × (64+32) × 256 = 0.64M
+#   h_proj (per-layer): 26 × 2048 × 32 = 1.70M
+#   总 trainable ≈ 19.12M (~0.122% of 15.7B,与 OLMoE/Qwen3 RCP 比例对齐)
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 256
+moe_lora_rank: 16
+moe_lora_alpha: 32
+moe_lora_top_k: 6                       # 跟 base routed top-k=6 对齐
+moe_lora_pool_share: global
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all             # 自动覆盖 26 个 MoE block(layer 0 排除)
+moe_lora_hidden_bottleneck_dim: 32
+#moe_lora_balance_loss_coef: 0.001     # 如果遇到 dead expert 再启用
+
+### dataset
+dataset: metamathqa_r1
+template: default                       # DeepSeek-V2-Lite Base 用 default 模板
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/rcp_math
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_rcp_math
+
+### train
+# 8× H800 — DeepSeek-V2-Lite ~16B,比 Qwen3-30B 小一半,batch 可略大
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

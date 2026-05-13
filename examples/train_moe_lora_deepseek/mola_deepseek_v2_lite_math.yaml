@@ -1,0 +1,61 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (MoLA — DeepSeek-V2-Lite, math)
+# MoLA(NAACL'24): per-layer pool + 层间异构 expert 分配(深层多浅层少)。
+# 26 层(layer 1-26 MoE,layer 0 dense 自动跳过)。
+# Allocation 按 OLMoE MoLA 的 ratio(8/12/20/24)scaled 到 26 层:
+#   layer  1-4:   4 expert × 4 层 = 16
+#   layer  5-9:   6 expert × 5 层 = 30
+#   layer 10-14:  8 expert × 5 层 = 40
+#   layer 15-19: 10 expert × 5 层 = 50
+#   layer 20-23: 12 expert × 4 层 = 48
+#   layer 24-26: 16 expert × 3 层 = 48
+#   ─────────────────────────────────────
+#   总 expert: 232  (26 项 length match _find_moe_blocks 输出)
+#
+# 参数估算:
+#   LoRA pool (rank=16): 232 × 2 × 16 × 2048 = 15.21M
+#   Independent gate (per_layer, average n_experts=9): 26 × 2048 × 9 = 0.48M
+#   总 ≈ 15.7M (~0.10% of 15.7B,略低于 RCP 19M,可接受)
+stage: sft
+do_train: true
+finetuning_type: mola
+mola_n_experts_per_layer: 4,4,4,4,6,6,6,6,6,8,8,8,8,8,10,10,10,10,10,12,12,12,12,16,16,16
+mola_rank: 16
+mola_alpha: 32
+mola_top_k: 2
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/mola_math
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_mola_math
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

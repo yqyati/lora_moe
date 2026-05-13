@@ -1,0 +1,49 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (MoELoRA / baseline2 — DeepSeek-V2-Lite, code)
+# 同 math 版,只换 dataset。
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 16
+moe_lora_rank: 12
+moe_lora_alpha: 24
+moe_lora_top_k: 2
+moe_lora_pool_share: per_layer
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_routing_mode: independent
+
+### dataset
+dataset: magicoder_oss_75k
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora_code/baseline2_moelora
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_baseline2_code
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

@@ -38,7 +38,11 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --batch_size 64 \
     --max_new_tokens 512
 
-
+torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_new/v2_enhanced_rank128 \
+    --batch_size 512 \
+    --max_new_tokens 512
 
 torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model allenai/OLMoE-1B-7B-0924 \
@@ -75,7 +79,29 @@ torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --chat_mode \
     --num_samples 3 --k 1 --temperature 0.2 \
     --save_path /tmp/humaneval_debug.jsonl 
+torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
+    --base_model /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/deepseek_v2_lite/moe_lora_code/baseline2_moelora \
+    --batch_size 512 \
+    --max_new_tokens 512
+    
 
+/root/miniconda3/envs/qwen35/bin/python eval_scripts/compute_das.py \
+    --base_model /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
+    --domain_dataset data/magicoder_oss_75k.json \
+    --general_dataset cais/mmlu --general_config all --general_split test \
+    --top_k 4 --max_samples 200 \
+    --output eval_results/das_deepseek_v2_lite_code.json
+
+
+torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
+    --base_model allenai/OLMoE-1B-7B-0924 \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/olmoe/moe_lora_code/perft_s \
+    --batch_size 64 \
+    --max_new_tokens 512 \
+    --chat_mode \
+    --num_samples 3 --k 1 --temperature 0.2 \
+    --save_path /tmp/humaneval_debug.jsonl 
 torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
     --adapter_path saves/qwen3/moe_lora/rcp_global_das_init_math \
