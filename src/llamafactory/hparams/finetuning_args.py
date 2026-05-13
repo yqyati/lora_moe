@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 
 @dataclass
@@ -532,6 +532,24 @@ class FinetuningArguments(
             "0 = disabled (vanilla V2 with 64-d MoE logits only). "
             "When > 0, a Linear(d_model, dim) projects hidden state and concats with "
             "router_logits before W_l. Recommended: 16. Breaks the 64-d info bottleneck."
+        },
+    )
+    moe_lora_das_init_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "MoE-LoRA: path to DAS json (e.g. eval_results/das_qwen3_math.json) "
+            "for DAS-informed RoutingProjection initialization. When provided, W_l is "
+            "initialized via hard-partition: each LoRA expert is assigned a group of "
+            "base experts (sorted by per-layer DAS) with strong positive weight, "
+            "preventing expert collapse on sparse-routing base models. "
+            "Only effective for routing_mode='learned' and w_share='per_layer'."
+        },
+    )
+    moe_lora_das_init_strength: float = field(
+        default=1.0,
+        metadata={
+            "help": "MoE-LoRA: DAS init weight magnitude (gamma). Default 1.0; "
+            "lower (e.g. 0.5) leaves more room for W_l to evolve during training."
         },
     )
     moe_lora_n_groups: int = field(

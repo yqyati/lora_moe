@@ -1,0 +1,59 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (RCP w/ DAS-informed Init — code domain)
+# 在 rcp_per_layer_qwen3_code 基础上启用 DAS hard partition init:
+# - 加载 eval_results/das_qwen3_code.json
+# - 每层 W_l 用 per-layer DAS 排序后 hard-partition 把 128 base experts 切成 N_L 组
+# - 每个 LoRA expert "拥有" N_E/N_L 个 DAS 高分的 base expert
+# - 训练初期不可能 collapse,DAS init 强制结构性均衡
+#
+# 预期: dead expert < 5%, 不需要 balance loss
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 16
+moe_lora_rank: 6
+moe_lora_alpha: 12
+moe_lora_top_k: 2
+moe_lora_pool_share: per_layer
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_hidden_bottleneck_dim: 32
+
+### ⭐ DAS-informed initialization
+moe_lora_das_init_path: eval_results/das_qwen3_code.json
+moe_lora_das_init_strength: 1.0    # gamma; 0.5 留更多演化空间, 1.0 更强先验
+
+### dataset
+dataset: magicoder_oss_75k
+template: qwen3
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/moe_lora_code/rcp_per_layer_das_init
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: qwen3_rcp_per_layer_das_init_code
+
+### train
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 3
+learning_rate: 6.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

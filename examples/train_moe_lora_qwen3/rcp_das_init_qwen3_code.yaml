@@ -1,0 +1,66 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (RCP + Hierarchical Pool + DAS Init) — code domain
+# 在原 rcp_qwen3_code.yaml 基础上加 DAS-informed W_l initialization:
+# Hierarchical Pool: 48 层分 4 组, 每组 12 层 + 128 LoRA experts (n_lora_per_group)
+# DAS hard-partition: 每层 W_l 按对应层的 DAS 排序,把 128 base experts 一一映射到
+# 128 LoRA expert(n_per_group = N_E/n_lora_per_group = 128/128 = 1,每个 LoRA
+# expert 强响应 DAS 排名对应的那个 base expert)。
+#
+# 参数估算(与原 rcp_qwen3_code 完全一致):
+#   LoRA pool (4 groups × 256 = 1024 LoRAs): 1024 × 2 × 8 × 2048 = 33.55M
+#   W_l (per-layer): 48 × 160 × 256 = 1.97M
+#   h_proj (per-layer): 48 × 2048 × 32 = 3.15M
+#   总 trainable ≈ 38.67M
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 512
+moe_lora_n_groups: 4              # ⭐ Hierarchical Pool,4 组 × 256 LoRA/组
+moe_lora_rank: 16
+moe_lora_alpha: 32
+moe_lora_top_k: 8
+moe_lora_pool_share: global
+moe_lora_w_share: per_layer        # DAS init 需要 per_layer w_share 才精准生效
+moe_lora_target_layers: all
+#moe_lora_balance_loss_coef:  0.0001
+moe_lora_hidden_bottleneck_dim: 32
+
+### ⭐ DAS-informed initialization
+moe_lora_das_init_path: eval_results/das_qwen3_code.json
+moe_lora_das_init_strength: 1.0    # gamma; 1.0 = 标准强度
+
+### dataset
+dataset: magicoder_oss_75k
+template: qwen3
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/moe_lora_code/rcp_h16_das_init
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: qwen3_rcp_h16_das_init_code
+
+### train
+# 8× H800 — effective batch = 12 × 3 × 8 = 288
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 3
+learning_rate: 6.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

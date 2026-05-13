@@ -69,7 +69,9 @@ class RoutingProjection(nn.Module):
     """
 
     def __init__(self, n_experts: int, n_lora: int,
-                 d_model: int = 0, hidden_bottleneck_dim: int = 0):
+                 d_model: int = 0, hidden_bottleneck_dim: int = 0,
+                 das_init: Optional[torch.Tensor] = None,
+                 das_init_strength: float = 1.0):
         super().__init__()
         self.hidden_bottleneck_dim = hidden_bottleneck_dim
         if hidden_bottleneck_dim > 0:
@@ -81,6 +83,31 @@ class RoutingProjection(nn.Module):
             self.h_proj = None
             input_dim = n_experts
         self.proj = nn.Linear(input_dim, n_lora, bias=False)
+
+        # DAS-informed initialization (optional):
+        # hard-partition the N_E base experts by DAS rank into N_L groups,
+        # assign each group to a distinct LoRA expert via strong positive weight.
+        # 其余位置保留 Kaiming default init,确保训练后仍可演化。
+        if das_init is not None:
+            assert das_init.shape[0] == n_experts, \
+                f"das_init dim {das_init.shape[0]} != n_experts {n_experts}"
+            with torch.no_grad():
+                sorted_idx = das_init.argsort(descending=True)  # high to low
+                if n_lora <= n_experts:
+                    # 多对一: 每个 LoRA expert 拥有 (N_E / N_L) 个 base expert
+                    n_per_group = n_experts // n_lora
+                    for lora_i in range(n_lora):
+                        start = lora_i * n_per_group
+                        end = start + n_per_group if lora_i < n_lora - 1 else n_experts
+                        group = sorted_idx[start:end]
+                        self.proj.weight.data[lora_i, group] = das_init_strength
+                else:
+                    # n_lora > n_experts: 每 base expert 被多个 LoRA "共享"(round-robin)
+                    # LoRA i 映射到 DAS 排名 (i mod N_E) 的 base expert
+                    for lora_i in range(n_lora):
+                        base_idx = sorted_idx[lora_i % n_experts].item()
+                        self.proj.weight.data[lora_i, base_idx] = das_init_strength
+
         # 监控用 buffer（long 类型不会被 .to(dtype=bfloat16) 转换）
         self.register_buffer("entropy_sum", torch.zeros(1), persistent=False)
         self.register_buffer("entropy_count", torch.zeros(1, dtype=torch.long), persistent=False)
@@ -475,14 +502,16 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     device, dtype = sample_param.device, sample_param.dtype
 
     d_model = model.config.hidden_size
-    # transformers 4.x: num_experts; transformers 5.x: num_local_experts (Qwen3-MoE)
+    # transformers 4.x: num_experts; transformers 5.x: num_local_experts (Qwen3-MoE);
+    # DeepSeek-V2 / V3: n_routed_experts (shared experts 不参与 routing,不算 N_E)
     n_experts_moe = (
         getattr(model.config, "num_experts", None)
         or getattr(model.config, "num_local_experts", None)
+        or getattr(model.config, "n_routed_experts", None)
     )
     if n_experts_moe is None:
         raise RuntimeError(
-            "Could not determine N_E from config. Tried num_experts and num_local_experts. "
+            "Could not determine N_E from config. Tried num_experts, num_local_experts, n_routed_experts. "
             f"Available config fields: {list(vars(model.config).keys())[:30]}"
         )
 
@@ -502,6 +531,22 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
 
     # Hierarchical/Grouped Pool(可选,默认 1 = 单一 global pool)
     n_groups = getattr(finetuning_args, "moe_lora_n_groups", 1)
+
+    # DAS-informed initialization for RoutingProjection (可选,默认关闭)
+    # 提供 das_qwen3_math.json / das_qwen3_code.json 等文件,按每层 DAS rank 把
+    # base experts hard-partition 给 N_L 个 LoRA expert,防止训练初期 expert collapse。
+    das_init_path = getattr(finetuning_args, "moe_lora_das_init_path", None)
+    das_init_strength = getattr(finetuning_args, "moe_lora_das_init_strength", 1.0)
+    das_per_layer_tensor = None
+    if das_init_path:
+        import json as _json
+        with open(das_init_path) as f:
+            das_data = _json.load(f)
+        das_per_layer_tensor = torch.tensor(das_data["das_per_layer"], dtype=torch.float32)
+        logger.info_rank0(
+            f"Loaded DAS init from {das_init_path}: "
+            f"shape={tuple(das_per_layer_tensor.shape)}, strength={das_init_strength}"
+        )
 
     # 1. 收集 MoE block + 按 target_layers 过滤
     all_moe_blocks = _find_moe_blocks(model)
@@ -554,8 +599,17 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         # global w_share 不支持 grouped(每层 W_l 必须独立才能路由到自己组)
         if n_groups > 1:
             raise ValueError("w_share='global' is incompatible with n_groups>1; use w_share='per_layer'.")
+        if das_per_layer_tensor is not None:
+            logger.warning_rank0(
+                "DAS init is set but w_share='global'; per-layer DAS cannot be applied to "
+                "a shared W_l. Falling back to using layer-0 DAS as init prior."
+            )
+            global_das_init = das_per_layer_tensor[0]
+        else:
+            global_das_init = None
         shared_proj = RoutingProjection(
             n_experts_moe, n_lora, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
+            das_init=global_das_init, das_init_strength=das_init_strength,
         ).to(device=device, dtype=dtype)
         model.add_module("global_routing_projection", shared_proj)
     if w_share == "global" and routing_mode == "independent":
@@ -576,8 +630,15 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
 
         if routing_mode == "learned":
             if w_share == "per_layer":
+                # 取该层对应的 DAS 信号(per-layer init prior)
+                layer_das = (
+                    das_per_layer_tensor[layer_idx]
+                    if das_per_layer_tensor is not None and layer_idx < das_per_layer_tensor.shape[0]
+                    else None
+                )
                 proj = RoutingProjection(
                     n_experts_moe, proj_out_dim, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
+                    das_init=layer_das, das_init_strength=das_init_strength,
                 ).to(device=device, dtype=dtype)
                 moe_block.routing_projection = proj
             else:
