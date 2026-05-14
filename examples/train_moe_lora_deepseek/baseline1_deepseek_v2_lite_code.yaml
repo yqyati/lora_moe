@@ -1,0 +1,59 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (baseline1: follow_moe — 路由直接复用 DeepSeek-V2 base router)
+# DeepSeek-V2-Lite: N_E=64 routed experts (+ 2 shared 不挂 LoRA), 26 MoE 层
+#   top_k=6, hidden=2048
+# 每个 routed expert 配一份 LoRA(n_lora 必须 = N_E = 64)
+# 参数估算:
+#   per layer: 64 × 2(A,B) × rank × 2048 = 262K × rank
+#   26 layers × rank=4: 26 × 64 × 2 × 4 × 2048 = 27.30M
+#   总 ≈ 27.3M / 15.7B = 0.174%
+#
+# 注: follow_moe 受 N_E 约束,无法精确对齐 RCP 19M。
+# rank=4 选择对齐 Qwen3 baseline1 的 0.168% 比例。
+# rank=2(13.6M, 0.087%)偏小,rank=4 给该 baseline 更公平的容量。
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 64                    # 必须 = DeepSeek-V2 n_routed_experts
+moe_lora_rank: 4
+moe_lora_alpha: 8                          # 2 × rank
+moe_lora_top_k: 6                          # = DeepSeek-V2 num_experts_per_tok
+moe_lora_pool_share: per_layer
+moe_lora_w_share: per_layer
+moe_lora_routing_mode: follow_moe          # 跳过 RoutingProjection,直接用 base router
+moe_lora_target_layers: all                # 自动跳过 layer 0 dense FFN
+
+### dataset
+dataset: magicoder_oss_75k
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora_code/baseline1_follow_moe
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_baseline1_code
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

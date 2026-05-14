@@ -42,7 +42,7 @@ dataloader_num_workers: 4
 ### output
 output_dir: saves/deepseek_v2_lite/moe_lora/rcp_math
 logging_steps: 5
-save_steps: 100
+save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
@@ -62,4 +62,4 @@ gradient_checkpointing: true
 ddp_find_unused_parameters: true
 
 ### deepspeed
-deepspeed: examples/deepspeed/ds_z2_config.json
+deepspeed: examples/deepspeed/ds_z3_config.json

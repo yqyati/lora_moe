@@ -48,23 +48,28 @@ def collect_routing_scores(model, tokenizer, samples, max_seq_len=512, desc=""):
     score_sum = torch.zeros(n_layers, n_experts, device=device, dtype=torch.float32)
     token_count = torch.zeros(n_layers, device=device, dtype=torch.float32)
 
-    # Forward pre-hook: capture hidden_state input to gate, compute logits manually,
-    # apply softmax, accumulate. (Bypasses any post-processing in gate.forward.)
+    # Forward pre-hook: 直接挂在 MoE block(`mlp`)上,从 hidden_states 算 routing scores。
+    # 这种方式兼容多种 MoE 实现:
+    #   - OLMoE / Qwen3-MoE: 它们的 MoE block forward 里也会先调 gate.linear
+    #   - DeepSeek-V2 (transformers 5.x native): forward 直接用 F.linear(h, gate.weight)
+    #     不走 gate.forward(),所以不能挂在 mlp.gate 上(hook 永远不触发)
+    # 改挂在 mlp 上,统一处理。
     handles = []
     for li, (orig_idx, mlp) in enumerate(moe_layers):
-        def make_hook(layer_idx):
+        def make_hook(layer_idx, gate_module):
             def hook(module, input):
                 h = input[0]
                 if h.dim() == 3:
                     h = h.reshape(-1, h.shape[-1])
-                bias = getattr(module, "bias", None)
-                logits = F.linear(h, module.weight, bias)
-                scores = F.softmax(logits.float(), dim=-1)
+                # 用 gate 的 weight 自己算 logits(跟 native MoE block 的内部计算一致)
+                bias = getattr(gate_module, "bias", None)
+                logits = F.linear(h.float(), gate_module.weight.float(), bias)
+                scores = F.softmax(logits, dim=-1)
                 # device_map="auto" 下,该层可能在 cuda:N 而 score_sum 在 cuda:0,需 to(device)
                 score_sum[layer_idx] += scores.sum(dim=0).to(score_sum.device)
                 token_count[layer_idx] += scores.shape[0]
             return hook
-        h = mlp.gate.register_forward_pre_hook(make_hook(li))
+        h = mlp.register_forward_pre_hook(make_hook(li, mlp.gate))
         handles.append(h)
 
     try:

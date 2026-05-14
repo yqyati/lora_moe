@@ -55,8 +55,10 @@ def add_z3_leaf_module(model: "PreTrainedModel") -> None:
         _set_z3_leaf_modules(model, [DbrxFFN])
 
     if model_type == "deepseek_v2":
-        # deepseek v2 uses custom code
-        _set_z3_leaf_modules(model, ["DeepseekV2MoE"])
+        # deepseek v2: custom modeling uses "DeepseekV2MoE"(大写 oE),
+        # transformers 5.x native class uses "DeepseekV2Moe"(小写 oe)。
+        # 同时传入两个名字,whichever exists in model will match.
+        _set_z3_leaf_modules(model, ["DeepseekV2MoE", "DeepseekV2Moe"])
 
     if model_type == "deepseek_v3" or model_type == "kimi_vl":
         # deepseek v3 and kimi vl use custom code

@@ -372,7 +372,14 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
         else:
             h_flat_for_gate = hidden_states
         gate_bias = getattr(self.gate, "bias", None)
-        router_logits = F.linear(h_flat_for_gate, self.gate.weight, gate_bias)
+        # detach gate.weight 以避免 DeepSpeed ZeRO 把它误认为被 trainable 两次访问。
+        # 在 PEFT 场景下 gate.weight 是 frozen 的,这次 F.linear 只是"读取"它来计算
+        # router_logits 给 RoutingProjection,不需要梯度流经它。detach 保证 DeepSpeed
+        # 的 grad reduce hook 不会被错误地触发两次。
+        router_logits = F.linear(
+            h_flat_for_gate, self.gate.weight.detach(),
+            gate_bias.detach() if gate_bias is not None else None,
+        )
 
     # 2. LoRA 分支
     detach = getattr(self._finetuning_args, "moe_lora_detach_p_e", False)

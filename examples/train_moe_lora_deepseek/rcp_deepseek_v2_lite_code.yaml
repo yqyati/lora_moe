@@ -15,10 +15,10 @@ use_reentrant_gc: false
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 256
-moe_lora_rank: 16
-moe_lora_alpha: 32
-moe_lora_top_k: 6                       # 跟 base routed top-k=6 对齐
+moe_lora_n_experts: 512
+moe_lora_rank: 8
+moe_lora_alpha: 16
+moe_lora_top_k: 8                       # 跟 base routed top-k=6 对齐
 moe_lora_pool_share: global
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all             # 自动覆盖 26 个 MoE block(layer 0 排除)
@@ -53,4 +53,4 @@ gradient_checkpointing: true
 ddp_find_unused_parameters: true
 
 ### deepspeed
-deepspeed: examples/deepspeed/ds_z2_config.json
+deepspeed: examples/deepspeed/ds_z3_config.json

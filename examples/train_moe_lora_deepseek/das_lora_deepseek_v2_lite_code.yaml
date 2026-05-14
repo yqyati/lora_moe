@@ -17,10 +17,9 @@ use_reentrant_gc: false
 stage: sft
 do_train: true
 finetuning_type: das_lora
-das_selected_experts_path: eval_results/das_deepseek_v2_lite_code.json
+das_lora_selected_experts_path: eval_results/das_deepseek_v2_lite_code.json
 das_lora_rank: 28
 das_lora_alpha: 56
-das_lora_top_k_experts: 4
 
 ### dataset
 dataset: magicoder_oss_75k
@@ -50,4 +49,4 @@ bf16: true
 gradient_checkpointing: true
 
 ### deepspeed
-deepspeed: examples/deepspeed/ds_z2_config.json
+deepspeed: examples/deepspeed/ds_z3_config.json

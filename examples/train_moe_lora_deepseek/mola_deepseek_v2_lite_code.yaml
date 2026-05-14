@@ -42,4 +42,4 @@ gradient_checkpointing: true
 ddp_find_unused_parameters: true
 
 ### deepspeed
-deepspeed: examples/deepspeed/ds_z2_config.json
+deepspeed: examples/deepspeed/ds_z3_config.json
