@@ -1,0 +1,65 @@
+### model
+model_name_or_path: allenai/OLMoE-1B-7B-0924
+trust_remote_code: true
+use_reentrant_gc: false   # reentrant GC + DDP(find_unused_parameters=true) 会让同一参数被 mark ready 两次
+
+### method (V2-Enhanced-PerLayer: 消融 — 去掉 Global Pool,改成 per-layer pool)
+# Q3 ablation: Global Shared Pool vs Per-layer Pool (在 V2-enhanced 配置上, math domain)
+#
+# 跟 v2_enhanced_olmoe.yaml(global pool 主配置)的唯一区别:
+#   pool_share:  global  →  per_layer
+#   n_experts:   128     →  16        (改成"每层独立 16 个 expert")
+#
+# 其他完全对齐(W_l 结构 / hidden_bottleneck=16 / top_k=4 / rank=16 / lr / data 等)
+# → 实现严格的"single-variable" 消融 —— 唯一变量就是参数共享策略。
+#
+# 参数估算(per-layer pool, 16 layers × 16 experts/层):
+#   LoRA pool: 16 × 16 × 2 × 16 × 2048 = 16.78M
+#   W_l (per-layer, Linear(64+16, 16)): 16 × 80 × 16 = 0.02M
+#   h_proj (per-layer, Linear(2048, 16)): 16 × 2048 × 16 = 0.52M
+#   总 trainable ≈ 17.32M (~0.25% of OLMoE 6.9B)
+#
+# ⚠️ 注意 param 不严格对齐:
+#   v2_enhanced(global, N_L=128 rank=16): 8.39M LoRA pool
+#   本消融(per_layer, 16/层 × 16):       16.78M LoRA pool(2× 主配置)
+#   → 即使本消融用更多 param,如果仍输给 global,反向支撑 Q3 论点
+#   → 想严格 param-matched 比较,把 N_L 改成 8/层(8 × 16 × 16 × 2048 ≈ 8.4M)
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 16                    # ⭐ 每层 16 个独立 expert(global 时 128 共享)
+moe_lora_rank: 16
+moe_lora_alpha: 32
+moe_lora_top_k: 4                         # 跟 global 配置对齐
+moe_lora_pool_share: per_layer            # ⭐ 关键消融变量
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_balance_loss_coef: 0.0001        # 跟 v2_enhanced 主配置对齐
+moe_lora_hidden_bottleneck_dim: 16        # 跟 v2_enhanced 主配置对齐
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 64
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/olmoe/moe_lora/v2_enhanced_perlayer
+logging_steps: 5
+save_steps: 400
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: v2_enhanced_perlayer
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 8
+learning_rate: 4.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_find_unused_parameters: true

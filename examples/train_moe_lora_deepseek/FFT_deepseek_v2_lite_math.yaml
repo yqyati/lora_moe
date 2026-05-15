@@ -1,0 +1,54 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true                # ⭐ DeepSeek 用 custom modeling code
+use_reentrant_gc: false
+
+### method (FFT: 全参数微调,作为性能上界参考)
+# DeepSeek-V2-Lite: 15.7B params total
+#   Layer 0 dense FFN + Layer 1-26 MoE (64 routed + 2 shared expert/层)
+#   FFT 训练所有参数(包括 base router / shared experts / dense FFN / attention)
+#
+# 为什么需要 FFT baseline:
+#   - 性能上界: PEFT 方法的最高可能表现
+#   - 对比意义: RCP / LoRA 用 0.1% 参数能达到 FFT 多少 % 的性能
+#   - General retention 对照: FFT 是否会更严重灾难化遗忘
+stage: sft
+do_train: true
+finetuning_type: full
+
+### dataset
+dataset: metamathqa_r1
+template: default                       # DeepSeek-V2-Lite Base 用 default 模板
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/fft_math
+logging_steps: 5
+save_steps: 100
+save_total_limit: 2                     # ⚠️ 限制 2 个 ckpt(每个 ~31GB,2×=63GB,留余量给其他)
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true                   # 不保存优化器状态(saves/ ≤ 100GB 硬约束)
+report_to: wandb
+run_name: deepseek_v2_lite_fft_math
+
+### train
+# 8× H800 — DeepSeek-V2-Lite 15.7B 参数
+#   bf16 weights: 15.7B × 2 = 31.4 GB total / 8 卡 ≈ 3.9 GB params/卡
+#   ZeRO-3 切优化器+梯度+参数,显存压力可控
+#   有效 batch = per_device 1 × 8 GPU × grad_accum 32 = 256(对齐 LoRA 配置)
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 32
+learning_rate: 5.0e-5                   # FFT 用小 lr,典型 1e-5 ~ 5e-5
+num_train_epochs: 1.0                   # 跟其他 DeepSeek baseline 对齐
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json
+ddp_timeout: 180000000

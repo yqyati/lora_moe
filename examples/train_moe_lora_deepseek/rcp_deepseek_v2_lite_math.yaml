@@ -13,22 +13,34 @@ use_reentrant_gc: false
 #   - Shared expert 不参与 routing,自动不挂 LoRA
 #   - Base router 完全 frozen,只读 router_logits 作 W_l 输入
 #
-# 参数估算:
-#   LoRA pool (N_L=256, rank=16, global): 256 × 2 × 16 × 2048 = 16.78M
-#   W_l (per-layer): 26 × (64+32) × 256 = 0.64M
-#   h_proj (per-layer): 26 × 2048 × 32 = 1.70M
-#   总 trainable ≈ 19.12M (~0.122% of 15.7B,与 OLMoE/Qwen3 RCP 比例对齐)
+# 参数估算(N_L=512 拆 4 组,每组 128 expert):
+#   LoRA pool: 4 × 128 × 2 × 8 × 2048 = 16.78M
+#   W_l (per-layer, Linear(64+16, 128)):
+#     26 × 80 × 128 = 0.27M
+#   h_proj (per-layer, Linear(2048, 16)):
+#     26 × 2048 × 16 = 0.85M
+#   总 trainable ≈ 17.90M (~0.114% of 15.7B)
+#
+# Grouped pool 分组规则(_inject_moe_lora 内置):
+#   group_idx = layer_idx * n_groups // len(moe_blocks)
+#   26 个 MoE 层 / 4 组(26 % 4 = 2,会有 unbalance warning,可忽略):
+#     Group 0: MoE layer 0-6  (model layer 1-7,  7 层)
+#     Group 1: MoE layer 7-12 (model layer 8-13, 6 层)
+#     Group 2: MoE layer 13-19(model layer 14-20,7 层)
+#     Group 3: MoE layer 20-25(model layer 21-26,6 层)
+#   每组独立 LoRA pool(128 expert),layer 只能路由到自己组内的 expert。
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 256
-moe_lora_rank: 16
-moe_lora_alpha: 32
-moe_lora_top_k: 6                       # 跟 base routed top-k=6 对齐
-moe_lora_pool_share: global
-moe_lora_w_share: per_layer
+moe_lora_n_experts: 512
+moe_lora_n_groups: 8                   # ⭐ Hierarchical pool: 4 个独立组,每组 128 expert
+moe_lora_rank: 8
+moe_lora_alpha: 16
+moe_lora_top_k: 8                      # 跟 base routed top-k=6 对齐
+moe_lora_pool_share: global             # n_groups>1 必须 global
+moe_lora_w_share: per_layer             # n_groups>1 必须 per_layer
 moe_lora_target_layers: all             # 自动覆盖 26 个 MoE block(layer 0 排除)
-moe_lora_hidden_bottleneck_dim: 32
+moe_lora_hidden_bottleneck_dim: 64
 #moe_lora_balance_loss_coef: 0.001     # 如果遇到 dead expert 再启用
 
 ### dataset
@@ -40,14 +52,14 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/deepseek_v2_lite/moe_lora/rcp_math
+output_dir: saves/deepseek_v2_lite/moe_lora/rcp_math_g4
 logging_steps: 5
 save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb
-run_name: deepseek_v2_lite_rcp_math
+run_name: deepseek_v2_lite_rcp_math_g4
 
 ### train
 # 8× H800 — DeepSeek-V2-Lite ~16B,比 Qwen3-30B 小一半,batch 可略大

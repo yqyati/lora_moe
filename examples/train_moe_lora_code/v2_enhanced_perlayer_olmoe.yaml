@@ -1,0 +1,63 @@
+### model
+model_name_or_path: allenai/OLMoE-1B-7B-0924
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (V2-Enhanced-PerLayer: 消融 — 去掉 Global Pool,改成 per-layer pool)
+# Q3 ablation: Global Shared Pool vs Per-layer Pool (在 V2-enhanced 配置上)
+#
+# 跟 v2_enhanced_olmoe.yaml(global pool 主配置)的唯一区别:
+#   pool_share:  global  →  per_layer
+#   n_experts:   256     →  16        (改成"每层独立 16 个 expert")
+#
+# 其他完全对齐(W_l 结构 / hidden_bottleneck=16 / top_k=4 / rank=8 / lr / data 等)
+# → 实现严格的"single-variable" 消融,且 LoRA 参数总量也对齐(~8.4M),
+#   唯一变量就是 256 个 expert 是"全 layer 共享"还是"每层独立"。
+#
+# 参数估算(per-layer pool, 16 layers × 16 experts):
+#   LoRA pool: 16 × 16 × 2 × 8 × 2048 = 8.39M  ← 跟 global(256 × 2 × 8 × 2048)精确对齐
+#   W_l (per-layer, Linear(64+16, 16)): 16 × 80 × 16 = 0.02M  (比 global 的 W_l 小)
+#   h_proj (per-layer, Linear(2048, 16)): 16 × 2048 × 16 = 0.52M
+#   总 trainable ≈ 8.93M (~0.129% of OLMoE 6.9B,对齐 v2-enhanced 的 9.08M)
+#
+# 关键 ablation finding 期待:
+#   - Global 跑赢 → "shared parameters with layer-specific orchestration" 设计有效
+#   - Per-layer 跑赢 → 反驳我们的 Q3 narrative,需要重新解释 cosine distance 0.659 数据
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 16                    # ⭐ 每层 16 个独立 expert(global 时 256 共享)
+moe_lora_rank: 8
+moe_lora_alpha: 16
+moe_lora_top_k: 4                         # 跟 global 配置对齐
+moe_lora_pool_share: per_layer            # ⭐ 关键消融变量
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_hidden_bottleneck_dim: 64        # 跟 global 配置对齐
+
+### dataset
+dataset: magicoder_oss_75k
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/olmoe/moe_lora_code/v2_enhanced_perlayer
+logging_steps: 5
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: code_v2_enhanced_perlayer
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 2
+learning_rate: 2.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_find_unused_parameters: true
