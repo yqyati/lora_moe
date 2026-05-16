@@ -142,8 +142,22 @@ def inject_das_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
 
     sample_param = next(model.parameters())
     device, dtype = sample_param.device, sample_param.dtype
-    d_model = model.config.hidden_size
-    top_k_moe = model.config.num_experts_per_tok
+
+    # 多模态模型 (Qwen3.5-VL 等) 把 LM 配置嵌在 text_config 下,纯文本模型直接放顶层。
+    text_config = getattr(model.config, "text_config", None)
+    def _cfg_get(name: str):
+        v = getattr(model.config, name, None)
+        if v is None and text_config is not None:
+            v = getattr(text_config, name, None)
+        return v
+
+    d_model = _cfg_get("hidden_size")
+    top_k_moe = _cfg_get("num_experts_per_tok")
+    if d_model is None or top_k_moe is None:
+        raise RuntimeError(
+            "Could not determine hidden_size / num_experts_per_tok from model.config "
+            "(or text_config). Check model architecture."
+        )
 
     all_moe_blocks = _find_moe_blocks(model)
     if len(selected_per_layer) != len(all_moe_blocks):

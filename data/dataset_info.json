@@ -771,5 +771,19 @@
       "prompt": "content"
     },
     "folder": "python"
+  },
+  "llava_med_60k": {
+    "file_name": "/data/android/yqy/work/lora_moe/data/medical_train/llava_med/llava_med_train_filtered.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
   }
 }

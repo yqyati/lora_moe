@@ -1,0 +1,55 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3.5-35B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+image_max_pixels: 262144
+video_max_pixels: 16384
+
+### method (DAS-LoRA: Domain Advantage Score-based static expert selection)
+# 流程: (1) 先跑 eval_scripts/run_das_qwen3_5_vl_medical.sh 算出每层 top-K specialized experts
+#       (2) 训练时只在这些 expert 上挂 LoRA(static frozen mask)
+# Qwen3.5-VL: 40 层 × top_k=16 × LoRA(A,B) × hidden=2048
+# 参数:40 × 16 × 2 × rank × 2048 = 2,621,440 × rank
+# rank=32: 83.89M (~0.24%) — 接近 MoELoRA baseline 的 89.13M
+#
+# K=16 选择理由: K/N_E = 1:16,跟 OLMoE 的比例对齐(原 K=4/N_E=64 同比);
+#                K=4/N_E=256 比例只有 1:64,严重 unfair given base 长大了。
+# 对应 DAS JSON: das_qwen3_5_vl_medical_top16.json (Average C-DAS@16 = 0.413)
+stage: sft
+do_train: true
+finetuning_type: das_lora
+das_lora_selected_experts_path: eval_results/das_qwen3_5_vl_medical_top16.json
+das_lora_rank: 32
+das_lora_alpha: 64                        # 2 × rank
+
+### dataset
+dataset: llava_med_60k
+template: qwen3_5_nothink
+cutoff_len: 2048
+max_samples: 50000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3vl/moe_lora/das_lora_medical
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: qwen3vl_das_lora_medical
+
+### train
+per_device_train_batch_size: 8            # 跟 MoELoRA baseline 同档,smoke 测显存富余
+gradient_accumulation_steps: 4            # effective batch ~ 256 (8 GPU × 8 × 4)
+learning_rate: 6.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

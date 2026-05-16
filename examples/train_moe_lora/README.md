@@ -409,3 +409,12 @@ A: MoE-LoRA 是独立分支（不是叠加在 linear 上的 LoRA），无法 mer
 
 **Q: 评估生成很慢？**  
 A: 使用 `torchrun --nproc_per_node=8` 多卡并行 + 大 batch（如 64）可加速约 30-50 倍。更大规模评估建议接 vLLM 或 sglang。
+
+
+# 跑某个 adapter 的 3 个 benchmark
+  bash eval_scripts/run_eval_medical_vl.sh \
+      /data/android/yqy/work/LlamaFactory/saves/qwen3vl/moe_lora/das_lora_medical \
+      baseline2_moelora
+
+  # 跑 base model(无 adapter)
+  bash eval_scripts/run_eval_medical_vl.sh "" base

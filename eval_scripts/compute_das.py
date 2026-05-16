@@ -28,12 +28,39 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+def _locate_decoder_layers(model):
+    """定位 decoder 层列表,兼容纯文本 LM 和多模态 LM。
+    与 model_utils/moe_lora.py 中的同名函数保持一致的 fallback 顺序。
+    """
+    base = getattr(model, "model", None)
+    if base is not None and hasattr(base, "layers"):
+        return base.layers
+    if base is not None:
+        for sub_name in ("text_model", "language_model"):
+            sub = getattr(base, sub_name, None)
+            if sub is not None and hasattr(sub, "layers"):
+                return sub.layers
+            if sub is not None:
+                inner = getattr(sub, "model", None)
+                if inner is not None and hasattr(inner, "layers"):
+                    return inner.layers
+    lm = getattr(model, "language_model", None)
+    if lm is not None:
+        if hasattr(lm, "layers"):
+            return lm.layers
+        inner = getattr(lm, "model", None)
+        if inner is not None and hasattr(inner, "layers"):
+            return inner.layers
+    raise RuntimeError("Cannot locate decoder layers in model.")
+
+
 @torch.no_grad()
 def collect_routing_scores(model, tokenizer, samples, max_seq_len=512, desc=""):
     """Run forward on samples; for each MoE block, accumulate per-expert
     mean routing score. Returns tensor [n_layers, n_experts]."""
     moe_layers = []
-    for i, layer in enumerate(model.model.layers):
+    decoder_layers = _locate_decoder_layers(model)
+    for i, layer in enumerate(decoder_layers):
         if hasattr(layer, "mlp") and hasattr(layer.mlp, "gate"):
             moe_layers.append((i, layer.mlp))
 
@@ -90,10 +117,17 @@ def collect_routing_scores(model, tokenizer, samples, max_seq_len=512, desc=""):
 def extract_text(sample, dataset_name):
     """Extract a representative text field from various dataset formats."""
     if "messages" in sample:
-        # ShareGPT / chat format
+        # ShareGPT / chat format (role/content)
         msgs = sample["messages"]
         if isinstance(msgs, list) and len(msgs) > 0:
             return " ".join(str(m.get("content", "")) for m in msgs if isinstance(m, dict))
+    if "conversations" in sample:
+        # LLaVA-style sharegpt (from/value),去掉 <image> 占位符
+        msgs = sample["conversations"]
+        if isinstance(msgs, list) and len(msgs) > 0:
+            return " ".join(
+                str(m.get("value", "")) for m in msgs if isinstance(m, dict)
+            ).replace("<image>", "").strip()
     # MMLU-style (question + choices,先检查 choices,因为 answer 可能是 int label)
     if "question" in sample and "choices" in sample:
         choices = sample["choices"]
