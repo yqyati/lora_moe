@@ -18,7 +18,7 @@ dataloader_num_workers: 4
 ### output
 output_dir: saves/qwen3/fft_code/fft_qwen3
 logging_steps: 5
-save_steps: 100
+save_steps: 300
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true

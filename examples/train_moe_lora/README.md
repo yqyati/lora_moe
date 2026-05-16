@@ -52,9 +52,13 @@ torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
 
 torchrun --nproc_per_node=8 eval_scripts/eval_gsm8k.py \
     --base_model /data/android/yqy/work/LlamaFactory/saves/qwen3/fft_math/fft_qwen3 \
-    --batch_size 512 \
+    --batch_size 64 \
     --max_new_tokens 512
   
+  torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
+    --base_model /data/android/yqy/work/LlamaFactory/saves/qwen3/fft_math/fft_qwen3  \
+    --batch_size 64 \
+    --max_new_tokens 512
 
 # 评估 MATH-500
 torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
@@ -143,9 +147,8 @@ torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
 
 
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
-    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/rcp_h16 \
-    --batch_size 512 \
+    --base_model /data/android/yqy/work/LlamaFactory/saves/qwen3/fft_code/fft_qwen3 \
+    --batch_size 64 \
     --max_new_tokens 512
 torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
@@ -153,8 +156,7 @@ torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
     --max_new_tokens 512
 
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
-    --base_model /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/qwen3/moe_lora_code/rcp_h16 \
+    --base_model /data/android/yqy/work/LlamaFactory/saves/qwen3/fft_code/fft_qwen3 \
     --batch_size 64 \
     --max_new_tokens 512 \
     --chat_mode \
@@ -326,7 +328,7 @@ torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
     --save_path eval_results/baseline2.jsonl
 
 torchrun --nproc_per_node=8 eval_scripts/eval_general.py \
-    --base_model  /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B \
+    --base_model  /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
     --benchmark all \
     --batch_size 512 \
     --save_path eval_results/baseline2.jsonl

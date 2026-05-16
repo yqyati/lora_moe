@@ -50,6 +50,7 @@ SUPPORTED_MOE_BLOCK_NAMES = {
     "DeepseekV2Moe",              # DeepSeek-V2 (transformers 5.x native, 注意大小写)
     "DeepseekV3MoE",              # DeepSeek-V3 (custom)
     "DeepseekV3Moe",              # DeepSeek-V3 (transformers 5.x native)
+    "Qwen3_5MoeSparseMoeBlock",   # Qwen3.5-MoE (multimodal, transformers 5.2+)
 }
 
 
@@ -465,14 +466,49 @@ def _resolve_target_layer_indices(target_layers: str, n_layers: int) -> List[int
     return [int(s) for s in target_layers.split(",") if s.strip()]
 
 
+def _locate_decoder_layers(model: "PreTrainedModel") -> Optional[nn.Module]:
+    """定位 decoder 层列表，兼容纯文本 LM 和多模态 LM。
+
+    优先级:
+    1. model.model.layers          (OLMoE / Qwen3-MoE / DeepSeek-V2 等纯文本)
+    2. model.model.text_model.layers / model.model.language_model.layers  (Qwen3.5-VL 等多模态)
+    3. model.language_model.model.layers  (其他多模态 wrapper)
+    返回 layers 容器 (有 .layers 属性的 module)，找不到返回 None。
+    """
+    base = getattr(model, "model", None)
+    if base is not None and hasattr(base, "layers"):
+        return base
+    # 多模态: model.model.text_model / language_model
+    if base is not None:
+        for sub_name in ("text_model", "language_model"):
+            sub = getattr(base, sub_name, None)
+            if sub is not None and hasattr(sub, "layers"):
+                return sub
+            # 再下一层 wrapper: text_model.model.layers
+            if sub is not None:
+                inner = getattr(sub, "model", None)
+                if inner is not None and hasattr(inner, "layers"):
+                    return inner
+    # 顶层 language_model wrapper
+    lm = getattr(model, "language_model", None)
+    if lm is not None:
+        if hasattr(lm, "layers"):
+            return lm
+        inner = getattr(lm, "model", None)
+        if inner is not None and hasattr(inner, "layers"):
+            return inner
+    return None
+
+
 def _find_moe_blocks(model: "PreTrainedModel") -> List[nn.Module]:
-    """遍历 model.model.layers，找到所有 MoE block。"""
+    """遍历 decoder layers，找到所有 MoE block。"""
     moe_blocks = []
-    layers = getattr(model, "model", None)
-    if layers is None or not hasattr(layers, "layers"):
+    layers = _locate_decoder_layers(model)
+    if layers is None:
         raise ValueError(
-            "Cannot locate model.model.layers. Make sure the model is a "
-            "decoder-style LM (e.g. OlmoeForCausalLM)."
+            "Cannot locate decoder layers. Tried model.model.layers, "
+            "model.model.text_model.layers, model.model.language_model.layers, "
+            "model.language_model.(model.)layers."
         )
     for layer in layers.layers:
         # OLMoE 在 layer.mlp，DeepSeek-V2 也常在 layer.mlp 或 layer.feed_forward
@@ -511,18 +547,34 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     sample_param = next(model.parameters())
     device, dtype = sample_param.device, sample_param.dtype
 
-    d_model = model.config.hidden_size
+    # 多模态模型 (Qwen3.5-VL 等) 把 LM 配置嵌在 text_config 下，纯文本模型直接放顶层。
+    # 先在顶层找，找不到再 fallback 到 text_config，保持对 OLMoE/Qwen3/DeepSeek 完全向后兼容。
+    text_config = getattr(model.config, "text_config", None)
+
+    def _cfg_get(name: str):
+        v = getattr(model.config, name, None)
+        if v is None and text_config is not None:
+            v = getattr(text_config, name, None)
+        return v
+
+    d_model = _cfg_get("hidden_size")
+    if d_model is None:
+        raise RuntimeError("Could not determine hidden_size from model.config (or text_config).")
+
     # transformers 4.x: num_experts; transformers 5.x: num_local_experts (Qwen3-MoE);
     # DeepSeek-V2 / V3: n_routed_experts (shared experts 不参与 routing,不算 N_E)
     n_experts_moe = (
-        getattr(model.config, "num_experts", None)
-        or getattr(model.config, "num_local_experts", None)
-        or getattr(model.config, "n_routed_experts", None)
+        _cfg_get("num_experts")
+        or _cfg_get("num_local_experts")
+        or _cfg_get("n_routed_experts")
     )
     if n_experts_moe is None:
+        fields = list(vars(model.config).keys())[:30]
+        if text_config is not None:
+            fields += ["text_config." + k for k in list(vars(text_config).keys())[:30]]
         raise RuntimeError(
-            "Could not determine N_E from config. Tried num_experts, num_local_experts, n_routed_experts. "
-            f"Available config fields: {list(vars(model.config).keys())[:30]}"
+            "Could not determine N_E from config. Tried num_experts, num_local_experts, n_routed_experts "
+            f"(in both top-level and text_config). Available config fields: {fields}"
         )
 
     # follow_moe 模式：复用原 MoE router，n_lora 必须等于 n_experts_moe，
