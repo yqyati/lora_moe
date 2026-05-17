@@ -413,7 +413,7 @@ A: 使用 `torchrun --nproc_per_node=8` 多卡并行 + 大 batch（如 64）可�
 
 # 跑某个 adapter 的 3 个 benchmark
   bash eval_scripts/run_eval_medical_vl.sh \
-      /data/android/yqy/work/LlamaFactory/saves/qwen3vl/moe_lora/das_lora_medical \
+      /data/android/yqy/work/LlamaFactory/saves/qwen3vl/moe_lora/v2_enhanced_perlayer_medical \
       baseline2_moelora
 
   # 跑 base model(无 adapter)

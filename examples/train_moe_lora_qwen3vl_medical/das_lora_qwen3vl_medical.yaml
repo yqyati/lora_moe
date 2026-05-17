@@ -18,32 +18,32 @@ video_max_pixels: 16384
 stage: sft
 do_train: true
 finetuning_type: das_lora
-das_lora_selected_experts_path: eval_results/das_qwen3_5_vl_medical_top16.json
+das_lora_selected_experts_path: eval_results/das_qwen3_5_vl_medical_mixed_top16.json
 das_lora_rank: 32
 das_lora_alpha: 64                        # 2 × rank
 
 ### dataset
-dataset: llava_med_60k
+dataset: medical_mixed
 template: qwen3_5_nothink
 cutoff_len: 2048
-max_samples: 50000
+max_samples: 80000                        # mixed 总 74k,全用
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/qwen3vl/moe_lora/das_lora_medical
+output_dir: saves/qwen3vl/moe_lora/das_lora_medical_mixed
 logging_steps: 5
 save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb
-run_name: qwen3vl_das_lora_medical
+run_name: qwen3vl_das_lora_medical_mixed
 
 ### train
-per_device_train_batch_size: 8            # 跟 MoELoRA baseline 同档,smoke 测显存富余
-gradient_accumulation_steps: 4            # effective batch ~ 256 (8 GPU × 8 × 4)
-learning_rate: 6.0e-4
+per_device_train_batch_size: 4            # mixed 数据含长描述,保守 per_device
+gradient_accumulation_steps: 4            # effective batch ~ 128 (8 GPU × 4 × 4)
+learning_rate: 2.0e-4                     # 跟 v2/baseline2 对齐
 num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1

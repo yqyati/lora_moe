@@ -20,7 +20,10 @@ BASE_MODEL="${BASE_MODEL:-/data/android/yqy/work/lora_moe/model/Qwen3.5-35B-A3B}
 DATA_ROOT="${DATA_ROOT:-/data/android/yqy/work/lora_moe/data/medical_eval}"
 OUT_ROOT="${OUT_ROOT:-eval_results/medical_vl}"
 N_GPUS="${N_GPUS:-8}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-32}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-64}"
+# BATCH_SIZE: bs=4 with left-padding(eval_medical_vl.py 已修复 padding_side='left')安全且 4x 提速。
+# 历史:bs=4 + right-pad 时 closed_acc 从 83% 跌到 28%(processor 默认 right-pad 跟
+# decoder-only generation 不兼容)。左 pad 修复后 bs=4 跟 bs=1 数字一字不差。
 BATCH_SIZE="${BATCH_SIZE:-4}"
 
 mkdir -p "$OUT_ROOT"

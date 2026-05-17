@@ -785,5 +785,33 @@
       "user_tag": "human",
       "assistant_tag": "gpt"
     }
+  },
+  "medical_vqa_combined": {
+    "file_name": "/data/android/yqy/work/lora_moe/data/medical_train/medical_vqa_combined/train.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
+  },
+  "medical_mixed": {
+    "file_name": "/data/android/yqy/work/lora_moe/data/medical_train/medical_mixed/train.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt"
+    }
   }
 }

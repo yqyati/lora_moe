@@ -75,7 +75,8 @@ class RoutingProjection(nn.Module):
     def __init__(self, n_experts: int, n_lora: int,
                  d_model: int = 0, hidden_bottleneck_dim: int = 0,
                  das_init: Optional[torch.Tensor] = None,
-                 das_init_strength: float = 1.0):
+                 das_init_strength: float = 1.0,
+                 wl_init: str = "default"):
         super().__init__()
         self.hidden_bottleneck_dim = hidden_bottleneck_dim
         if hidden_bottleneck_dim > 0:
@@ -88,7 +89,7 @@ class RoutingProjection(nn.Module):
             input_dim = n_experts
         self.proj = nn.Linear(input_dim, n_lora, bias=False)
 
-        # DAS-informed initialization (optional):
+        # DAS-informed initialization (optional, takes precedence over wl_init):
         # hard-partition the N_E base experts by DAS rank into N_L groups,
         # assign each group to a distinct LoRA expert via strong positive weight.
         # 其余位置保留 Kaiming default init,确保训练后仍可演化。
@@ -111,6 +112,24 @@ class RoutingProjection(nn.Module):
                     for lora_i in range(n_lora):
                         base_idx = sorted_idx[lora_i % n_experts].item()
                         self.proj.weight.data[lora_i, base_idx] = das_init_strength
+        elif wl_init == "anchor":
+            # Anchor init (DAS-free): identity-like on z-channel, zero on h-channel.
+            # 让 LoRA routing 在 step 0 镜像 base routing 的一个 chunked 版本——
+            # 利用 base router 的 pretrained 结构作为"锚",避免随机 W_l 在 day 1
+            # 触发 routing collapse;training 中 W_l 渐进偏移学 task-specific routing。
+            with torch.no_grad():
+                self.proj.weight.data.zero_()
+                if n_lora <= n_experts:
+                    n_per_group = n_experts // n_lora
+                    for lora_i in range(n_lora):
+                        start = lora_i * n_per_group
+                        end = start + n_per_group if lora_i < n_lora - 1 else n_experts
+                        self.proj.weight.data[lora_i, start:end] = 1.0
+                else:
+                    for lora_i in range(n_lora):
+                        base_idx = lora_i % n_experts
+                        self.proj.weight.data[lora_i, base_idx] = 1.0
+                # h-channel (columns n_experts:) 已 zero,无需再设
 
         # 监控用 buffer（long 类型不会被 .to(dtype=bfloat16) 转换）
         self.register_buffer("entropy_sum", torch.zeros(1), persistent=False)
@@ -599,6 +618,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     # base experts hard-partition 给 N_L 个 LoRA expert,防止训练初期 expert collapse。
     das_init_path = getattr(finetuning_args, "moe_lora_das_init_path", None)
     das_init_strength = getattr(finetuning_args, "moe_lora_das_init_strength", 1.0)
+    wl_init = getattr(finetuning_args, "moe_lora_wl_init", "default")
     das_per_layer_tensor = None
     if das_init_path:
         import json as _json
@@ -672,6 +692,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         shared_proj = RoutingProjection(
             n_experts_moe, n_lora, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
             das_init=global_das_init, das_init_strength=das_init_strength,
+            wl_init=wl_init,
         ).to(device=device, dtype=dtype)
         model.add_module("global_routing_projection", shared_proj)
     if w_share == "global" and routing_mode == "independent":
@@ -701,6 +722,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
                 proj = RoutingProjection(
                     n_experts_moe, proj_out_dim, d_model=d_model, hidden_bottleneck_dim=hidden_bottleneck_dim,
                     das_init=layer_das, das_init_strength=das_init_strength,
+                    wl_init=wl_init,
                 ).to(device=device, dtype=dtype)
                 moe_block.routing_projection = proj
             else:

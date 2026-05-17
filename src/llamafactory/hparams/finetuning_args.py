@@ -552,6 +552,19 @@ class FinetuningArguments(
             "lower (e.g. 0.5) leaves more room for W_l to evolve during training."
         },
     )
+    moe_lora_wl_init: str = field(
+        default="default",
+        metadata={
+            "help": "MoE-LoRA: RoutingProjection W_l init mode. "
+            "'default' = Kaiming default init. "
+            "'anchor' = identity-like init that maps each LoRA expert i to a "
+            "contiguous chunk of base experts on the z-channel, with the "
+            "hidden-state channel zeroed. At step 0 the LoRA routing mirrors a "
+            "quantized base routing (no routing collapse); training then "
+            "gradually deviates W_l to learn task-specific routing. "
+            "Ignored when moe_lora_das_init_path is also set (DAS takes precedence)."
+        },
+    )
     moe_lora_n_groups: int = field(
         default=1,
         metadata={

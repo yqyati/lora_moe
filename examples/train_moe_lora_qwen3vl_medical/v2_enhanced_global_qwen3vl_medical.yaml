@@ -1,0 +1,65 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3.5-35B-A3B
+trust_remote_code: true
+use_reentrant_gc: false
+image_max_pixels: 262144
+video_max_pixels: 16384
+
+### method (V2-Enhanced-Global on Qwen3.5-VL medical — Global Shared Pool variant)
+# Qwen3.5-VL: 40 层 MoE text decoder, base N_E=256, top_k=8, hidden=2048
+# pool_share = global + n_groups=3 → 每组 ~13 层共享一个 LoRA pool (差不多 16 层/组)
+# 跟 v2_enhanced_perlayer (每层独立 64 experts × 40 = 2560 total) 对比:
+#   per_layer: 2560 LoRA experts total, no sharing
+#   global  : 384 LoRA experts total (128 per group × 3 groups), 跨层共享 → 显著少参
+#
+# 参数估算 (n_experts=384, n_groups=3, rank=8):
+#   LoRA pool: 384 × 2 × 8 × 2048 = 12.6M
+#   W_l (per-layer, Linear(256+256, 128)): 40 × 512 × 128 = 2.62M
+#   h_proj (per-layer, Linear(2048, 256)): 40 × 2048 × 256 = 20.97M
+#   总 trainable ≈ 36.2M (~0.10% of 35B,比 per_layer 85.9M 小 2.4×)
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 1200                 # 严格 param-match per_layer (2560 expert),跨 3 组 → 每组 800
+moe_lora_n_groups: 3                      # 40 层 / 3 ≈ 13 层每组(差不多 16 层/global)
+moe_lora_rank: 16
+moe_lora_alpha: 32                        # 2 × rank
+moe_lora_top_k: 8                         # 跟 base routed top-k=8 / baseline2 / perlayer 对齐
+moe_lora_pool_share: global               # ⭐ 关键变量:global(跨层共享) vs per_layer
+moe_lora_w_share: per_layer               # n_groups>1 时必须 per_layer
+moe_lora_target_layers: all
+#moe_lora_balance_loss_coef: 0.001         # 防 routing collapse
+moe_lora_hidden_bottleneck_dim: 256     # 跟 perlayer 对齐
+moe_lora_wl_init: anchor                  # ⭐ identity-like W_l init,防 day-1 collapse
+
+### dataset
+dataset: medical_mixed
+template: qwen3_5_nothink
+cutoff_len: 2048
+max_samples: 80000                        # mixed 总 74k,全用
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3vl/moe_lora/v2_enhanced_global_medical_mixed
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: qwen3vl_v2_enhanced_global_medical_mixed
+
+### train
+per_device_train_batch_size: 4            # mixed data 含长描述,保守 per_device
+gradient_accumulation_steps: 4            # effective batch ~ 128 (8 GPU × 4 × 4)
+learning_rate: 2.0e-4                     # 跟 baseline2/das_lora/perlayer 对齐
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

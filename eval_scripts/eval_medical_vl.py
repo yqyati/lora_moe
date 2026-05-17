@@ -48,6 +48,10 @@ from llamafactory.model.model_utils.das_lora import load_das_lora_state  # noqa:
 def load_model(args) -> tuple:
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[args.dtype]
     processor = AutoProcessor.from_pretrained(args.base_model, trust_remote_code=True)
+    # ⚠️ Decoder-only generation 必须 left-pad,否则 bs>1 时 right-pad 把样本结尾
+    # 接了 pad token,模型从错误位置开始 generate,closed_acc 从 83% 暴跌到 28%。
+    # processor.tokenizer 默认 right-pad,这里强制 left。
+    processor.tokenizer.padding_side = "left"
 
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
@@ -90,21 +94,29 @@ def load_model(args) -> tuple:
 # ============================================================
 
 def build_prompt_qwen3_5_nothink(question: str) -> str:
-    """手动构造跟训练 (template: qwen3_5_nothink) 100% 一致的 prompt:
+    """构造跟训练 (template: qwen3_5_nothink) 对齐的 prompt,并显式禁用思考:
         <|im_start|>user
         <|vision_start|><|image_pad|><|vision_end|>{question}<|im_end|>
         <|im_start|>assistant
+        <think>
 
-    绕开 processor.apply_chat_template — 该 chat_template 推理时会强加 <think>
-    标记(即使 enable_thinking=False 也只是塞 <think></think> 占位),
-    跟训练分布不符,导致 base/adapter model 胡言乱语 / 空 pred / 泄漏 'user\\n'。
-    单个 <|image_pad|> 会被 processor 在 __call__ 时按 image patch 数自动展开。
+        </think>
+
+    ⚠️ 为什么要塞空 <think></think>:
+        Qwen3.5-VL base 是 reasoning model,被训练成看到 <|im_start|>assistant\\n
+        就自动进 <think>...</think> 模式。如果不显式喂空 thinking 块,模型会
+        花光 max_new_tokens 全写 reasoning,最后答案被截掉 → pred 全是
+        '<think>\\nThe user is asking...' 半截思考,closed_acc 完全靠 thinking
+        里偶尔蹦出的 'yes'/'no' 字面蒙(SLAKE 41% / VQA-RAD 3.6%)。
+        塞空 <think></think> 等价于官方 chat_template 的 enable_thinking=False,
+        让模型直接生成 final answer。
     """
     return (
         "<|im_start|>user\n"
         "<|vision_start|><|image_pad|><|vision_end|>"
         f"{question}<|im_end|>\n"
         "<|im_start|>assistant\n"
+        "<think>\n\n</think>\n\n"
     )
 
 
@@ -190,7 +202,7 @@ def main():
     p.add_argument("--adapter_path", default=None)
     p.add_argument("--eval_json", required=True, help="data/medical_eval/<ds>/test.json")
     p.add_argument("--save_path", default=None, help="Save per-sample preds to JSONL")
-    p.add_argument("--max_new_tokens", type=int, default=32, help="VQA 答案多数 <30 token,32 够用")
+    p.add_argument("--max_new_tokens", type=int, default=64, help="VQA 短答 32 不够留余量,base 走 no-think 直答也只占 5-15 token,64 安全")
     p.add_argument("--batch_size", type=int, default=4, help="多模态 batch generation,80GB H100 上 4-8 都稳")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
@@ -275,6 +287,15 @@ def main():
             with open(metrics_path, "w") as f:
                 json.dump(metrics, f, indent=2, ensure_ascii=False)
             print(f"[save] metrics → {metrics_path}")
+
+            # 镜像一份到 /data/android/yqy/work/lora_moe/data/medical_vl_results/
+            # 方便所有 adapter × dataset 的准确率统一在 lora_moe/data 下汇总
+            mirror_dir = Path("/data/android/yqy/work/lora_moe/data/medical_vl_results")
+            mirror_dir.mkdir(parents=True, exist_ok=True)
+            mirror_path = mirror_dir / (Path(args.save_path).stem + ".metrics.json")
+            with open(mirror_path, "w") as f:
+                json.dump(metrics, f, indent=2, ensure_ascii=False)
+            print(f"[save] metrics mirror → {mirror_path}")
 
 
 if __name__ == "__main__":

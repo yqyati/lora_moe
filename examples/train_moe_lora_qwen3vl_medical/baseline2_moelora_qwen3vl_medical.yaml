@@ -17,34 +17,34 @@ finetuning_type: moe_lora
 moe_lora_n_experts: 64
 moe_lora_rank: 8
 moe_lora_alpha: 16                        # 2 × rank
-moe_lora_top_k: 2
+moe_lora_top_k: 8                         # 跟 base routed top-k=8 / v2_enhanced_perlayer / DAS 对齐 active ratio (1:8)
 moe_lora_pool_share: per_layer
 moe_lora_w_share: per_layer               # independent 模式下被忽略
 moe_lora_target_layers: all
 moe_lora_routing_mode: independent        # MoELoRA-style 独立 router
 
 ### dataset
-dataset: llava_med_60k
-template: qwen3_5_nothink                 # Qwen3.5 series, 关闭 thinking 走简洁 instruction 模式
-cutoff_len: 2048                          # 图像 token ~256 + 文本 ~1.5k 足够 LLaVA-Med 多轮
-max_samples: 50000                        # ~47.9k 全量;留点余量
+dataset: medical_mixed
+template: qwen3_5_nothink
+cutoff_len: 2048
+max_samples: 80000                        # mixed 总 74k,全用
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/qwen3vl/moe_lora/baseline2_moelora_medical
+output_dir: saves/qwen3vl/moe_lora/baseline2_moelora_medical_mixed
 logging_steps: 5
 save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb
-run_name: qwen3vl_baseline2_moelora_medical
+run_name: qwen3vl_baseline2_moelora_medical_mixed
 
 ### train
-per_device_train_batch_size: 8            # smoke 测得 batch=1 仅占 8.27GB/80GB,提到 8 (~30-40GB 估)
-gradient_accumulation_steps: 4            # 维持 effective batch ~ 256 (8 GPU × 8 × 4)
-learning_rate: 6.0e-4
+per_device_train_batch_size: 4            # mixed 数据含长描述,保守 per_device
+gradient_accumulation_steps: 4            # effective batch ~ 128 (8 GPU × 4 × 4)
+learning_rate: 2.0e-4                     # 跟 v2/das_lora 对齐
 num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1

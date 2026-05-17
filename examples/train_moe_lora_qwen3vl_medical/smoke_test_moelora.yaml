@@ -12,7 +12,7 @@ finetuning_type: moe_lora
 moe_lora_n_experts: 64
 moe_lora_rank: 8
 moe_lora_alpha: 16
-moe_lora_top_k: 2
+moe_lora_top_k: 8
 moe_lora_pool_share: per_layer
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all

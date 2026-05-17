@@ -1,0 +1,74 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3.5-35B-A3B
+trust_remote_code: true
+use_reentrant_gc: false                   # reentrant GC + DDP(find_unused_parameters=true) 会让同一参数被 mark ready 两次
+image_max_pixels: 262144
+video_max_pixels: 16384
+
+### method (V2-Enhanced-PerLayer — 消融:去掉 Global Shared Pool,改成 per-layer pool)
+# Q3 ablation: Global Shared Pool vs Per-layer Pool (V2-enhanced 配置, qwen3vl medical domain)
+#
+# 跟 v2_enhanced_qwen3vl_medical.yaml(global pool 主配置)的唯一区别:
+#   pool_share:  global  →  per_layer
+#   n_experts:   256 (cross-layer shared)  →  64 (每层独立 64 个 expert)
+#
+# 其他完全对齐(W_l 结构 / hidden_bottleneck=16 / top_k=8 / rank=8 / lr / data 等)
+# → 实现严格的"single-variable" 消融 —— 唯一变量就是参数共享策略。
+#
+# Qwen3.5-VL: 40 层 MoE text decoder, base N_E=256, top_k=8, hidden=2048
+#
+# 参数估算(per-layer pool, 40 layers × 64 experts/层):
+#   LoRA pool: 40 × 64 × 2 × 8 × 2048 = 83.89M
+#   W_l (per-layer, Linear(256+16, 64)): 40 × 272 × 64 = 0.70M
+#   h_proj (per-layer, Linear(2048, 16)): 40 × 2048 × 16 = 1.31M
+#   总 trainable ≈ 85.90M (~0.245% of 35B)
+#
+# 参数量对齐:
+#   baseline2 MoELoRA: 89.13M (0.255%)
+#   DAS-LoRA rank=32:  83.89M (0.240%)
+#   本消融:            85.90M (0.245%)  ✓ 与两条 baseline 严格 param-matched
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 64                   # ⭐ 每层 64 个独立 expert(global 时跨层共享)
+moe_lora_rank: 8
+moe_lora_alpha: 16                        # 2 × rank
+moe_lora_top_k: 8                         # 跟 base routed top-k=8 / baseline2 v5 对齐 active ratio (12.5%)
+moe_lora_pool_share: per_layer            # ⭐ 关键消融变量:per_layer(不共享)
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+#moe_lora_balance_loss_coef: 0.001        # 防 routing collapse + 跟 v2_enhanced 主配置对齐
+moe_lora_hidden_bottleneck_dim: 256       # task-orthogonal channel
+moe_lora_wl_init: anchor                  # ⭐ identity-like W_l init: LoRA routing 在 step 0 镜像 base routing,防止 day 1 collapse
+
+### dataset
+dataset: medical_mixed
+template: qwen3_5_nothink
+cutoff_len: 2048
+max_samples: 80000                        # mixed 总 74k,全用
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3vl/moe_lora/v2_enhanced_perlayer_medical_vqa
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: qwen3vl_v2_enhanced_perlayer_medical_vqa
+
+### train
+per_device_train_batch_size: 4            # mixed data 含长描述,保守 per_device(防 OOM)
+gradient_accumulation_steps: 4            # effective batch ~ 128 (8 GPU × 4 × 4)
+learning_rate: 2.0e-4                     # 跟 baseline2 / das_lora 对齐(原 6e-4 让 baseline2 训崩,公平起见这里也降)
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json
