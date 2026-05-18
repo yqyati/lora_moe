@@ -534,6 +534,32 @@ class FinetuningArguments(
             "router_logits before W_l. Recommended: 16. Breaks the 64-d info bottleneck."
         },
     )
+    moe_lora_n_global: int = field(
+        default=0,
+        metadata={
+            "help": "MoE-LoRA: number of cross-layer global LoRA experts (routed, shared across all layers). "
+            "0 = disabled. When > 0, per-layer W_l outputs (n_experts + n_global) logits and "
+            "joint top-K competes across both pools. Requires pool_share='per_layer'. "
+            "Designed to capture cross-layer recurring concepts via shared expert weights, "
+            "while per-layer pool stays for layer-specific specialization. "
+            "Joint mode disables balance loss to avoid per-pool boundary cases."
+        },
+    )
+    moe_lora_global_rank: int = field(
+        default=0,
+        metadata={
+            "help": "MoE-LoRA: rank for cross-layer global LoRA experts. "
+            "0 = use moe_lora_rank (same rank as per-layer pool). "
+            "Set to a different value to give the global pool a different rank than the per-layer pool."
+        },
+    )
+    moe_lora_global_alpha: int = field(
+        default=0,
+        metadata={
+            "help": "MoE-LoRA: alpha for cross-layer global LoRA experts. "
+            "0 = use moe_lora_alpha (same alpha as per-layer pool)."
+        },
+    )
     moe_lora_das_init_path: Optional[str] = field(
         default=None,
         metadata={

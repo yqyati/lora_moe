@@ -286,13 +286,28 @@ class LoRAPool(nn.Module):
         else:
             return self._forward_loop(h, topk_vals, topk_idx)
 
+    def dispatch(self, h: torch.Tensor, topk_vals: torch.Tensor, topk_idx: torch.Tensor) -> torch.Tensor:
+        """跳过内部 top-K, 直接用外部传入的 (topk_vals, topk_idx) 做 expert dispatch.
+
+        用于 joint top-K 场景(per-layer + cross-layer global pool 联合竞争).
+        topk_idx 必须在 [0, self.n_experts) 范围内; 没选中的 slot 应填 idx=0,
+        vals=0(权重 0 时输出 = 0 * expert(h) = 0, 不污染结果).
+
+        不更新 activation_count 也不算 balance loss (joint 模式由外部 forward 统筹).
+        """
+        topk_vals = topk_vals.to(h.dtype)
+        if self._use_grouped_mm:
+            return self._forward_grouped_mm(h, topk_vals, topk_idx)
+        else:
+            return self._forward_loop(h, topk_vals, topk_idx)
+
     def _forward_grouped_mm(self, h: torch.Tensor, topk_vals: torch.Tensor, topk_idx: torch.Tensor) -> torch.Tensor:
         """使用 torch.nn.functional.grouped_mm 的高效实现。"""
         orig_shape = h.shape
         d = h.shape[-1]
         h_flat = h.reshape(-1, d)  # [N, d]
         N = h_flat.shape[0]
-        k = self.top_k
+        k = topk_idx.shape[-1]   # 从 topk_idx 推断, 兼容 dispatch 模式(K 可能 != self.top_k)
 
         # 展开: 每个 token 复制 k 份，对应 k 个选中的 expert
         h_expanded = h_flat.unsqueeze(1).expand(N, k, d).reshape(N * k, d)  # [N*k, d]
@@ -360,9 +375,35 @@ class LoRAPool(nn.Module):
         return out
 
 
-# ---------------------------------------------------------------------------
-# Monkey-patch 注入逻辑
-# ---------------------------------------------------------------------------
+
+
+def _apply_lora_with_optional_cross_pool(moe_block, h_input, p_L):
+    """LoRA dispatch helper:
+    - 无 cross-layer pool: 走原 LoRAPool.forward 路径(单 pool 自己 top-K + balance loss).
+    - 有 cross-layer pool: joint top-K (over n_local+n_global), 按 idx<n_local 拆分
+      dispatch 到 per-layer 和 cross-layer pool, 各自 dispatch 后加和.
+      Joint 模式不算 balance loss(由 LoRAPool.dispatch 跳过).
+    """
+    cross_pool = getattr(moe_block, "cross_layer_lora_pool", None)
+    if cross_pool is None:
+        return moe_block.lora_pool(h_input, p_L)
+
+    n_local = moe_block.lora_pool.n_experts
+    K = moe_block.lora_pool.top_k  # joint top-K (per-layer 和 cross-layer 共用 K)
+
+    p_L_h = p_L.to(h_input.dtype)
+    topk_vals, topk_idx = p_L_h.topk(K, dim=-1)               # (..., K)
+    local_mask = topk_idx < n_local                            # bool, (..., K)
+    local_mask_f = local_mask.to(topk_vals.dtype)
+
+    local_idx = topk_idx.masked_fill(~local_mask, 0)
+    local_vals = topk_vals * local_mask_f
+    global_idx = (topk_idx - n_local).masked_fill(local_mask, 0)
+    global_vals = topk_vals * (1.0 - local_mask_f)
+
+    out_local = moe_block.lora_pool.dispatch(h_input, local_vals, local_idx)
+    out_global = cross_pool.dispatch(h_input, global_vals, global_idx)
+    return out_local + out_global
 
 
 def patched_moe_forward(self, hidden_states: torch.Tensor):
@@ -423,8 +464,8 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
             if getattr(self.routing_projection, "h_proj", None) is not None:
                 p_L = self.routing_projection(logits_for_lora, h_flat)
             else:
-                p_L = self.routing_projection(logits_for_lora)     # [B*T, N_L]
-        lora_output = self.lora_pool(h_flat, p_L)              # [B*T, D]
+                p_L = self.routing_projection(logits_for_lora)     # [B*T, N_L (+ N_global)]
+        lora_output = _apply_lora_with_optional_cross_pool(self, h_flat, p_L)   # [B*T, D]
         lora_output = lora_output.reshape(b, t, d)
     else:
         if routing_mode == "follow_moe":
@@ -438,10 +479,11 @@ def patched_moe_forward(self, hidden_states: torch.Tensor):
                 p_L = self.routing_projection(logits_for_lora, hidden_states)
             else:
                 p_L = self.routing_projection(logits_for_lora)
-        lora_output = self.lora_pool(hidden_states, p_L)
+        lora_output = _apply_lora_with_optional_cross_pool(self, hidden_states, p_L)
 
     # 3. 相加，保持原签名
     final_output = moe_output + lora_output
+
     if rest:
         return (final_output, *rest)
     return final_output
@@ -619,6 +661,7 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
     das_init_path = getattr(finetuning_args, "moe_lora_das_init_path", None)
     das_init_strength = getattr(finetuning_args, "moe_lora_das_init_strength", 1.0)
     wl_init = getattr(finetuning_args, "moe_lora_wl_init", "default")
+    n_global = getattr(finetuning_args, "moe_lora_n_global", 0)
     das_per_layer_tensor = None
     if das_init_path:
         import json as _json
@@ -677,6 +720,34 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
                 model.add_module(f"global_lora_pool_g{g}", pool)
                 grouped_pools.append(pool)
 
+    # 2c. (可选) cross-layer global pool: 跨层共享一个 routed LoRA pool,
+    # 跟 per-layer pool 联合 joint top-K 竞争(joint 模式不算 balance loss).
+    # global pool 的 rank / alpha 可以跟 per-layer pool 不同 (通过 moe_lora_global_rank/alpha 设置)
+    cross_layer_pool = None
+    if n_global > 0:
+        if pool_share != "per_layer":
+            raise ValueError(
+                f"moe_lora_n_global={n_global} requires moe_lora_pool_share='per_layer' "
+                f"(got '{pool_share}'). Cross-layer pool is meant to complement per-layer pool, "
+                f"not stack on top of an existing global pool."
+            )
+        if routing_mode != "learned":
+            raise ValueError(
+                f"moe_lora_n_global={n_global} requires moe_lora_routing_mode='learned' "
+                f"(got '{routing_mode}'). Joint top-K requires W_l to output joint logits."
+            )
+        if n_groups != 1:
+            raise ValueError(f"moe_lora_n_global={n_global} requires n_groups=1, got {n_groups}.")
+        global_rank = getattr(finetuning_args, "moe_lora_global_rank", 0) or rank
+        global_alpha = getattr(finetuning_args, "moe_lora_global_alpha", 0) or alpha
+        cross_layer_pool = LoRAPool(n_global, d_model, global_rank, global_alpha, top_k).to(device=device, dtype=dtype)
+        model.add_module("cross_layer_lora_pool", cross_layer_pool)
+        logger.info_rank0(
+            f"MoE-LoRA: cross-layer global pool enabled with n_global={n_global} "
+            f"(rank={global_rank}, alpha={global_alpha}). Per-layer W_l will output (N_local={n_lora}+N_global={n_global}) logits, "
+            f"joint top-K={top_k} competes across both pools. Joint mode disables balance loss."
+        )
+
     if w_share == "global" and routing_mode == "learned":
         # global w_share 不支持 grouped(每层 W_l 必须独立才能路由到自己组)
         if n_groups > 1:
@@ -709,7 +780,8 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
 
         # RoutingProjection / IndependentRouter (follow_moe 模式下不创建任何 router)
         # 注意: grouped pool 时 W_l 输出维度是 n_lora_per_group(而非 n_lora)
-        proj_out_dim = n_lora_per_group  # n_groups=1 时等于 n_lora
+        # 注意: n_global > 0 时 W_l 输出 (n_lora_per_group + n_global), joint top-K
+        proj_out_dim = n_lora_per_group + n_global  # n_global=0 时退化为原行为
 
         if routing_mode == "learned":
             if w_share == "per_layer":
@@ -750,6 +822,10 @@ def inject_moe_lora(model: "PreTrainedModel", finetuning_args: "FinetuningArgume
         else:
             # 单一 global pool
             object.__setattr__(moe_block, "lora_pool", shared_pool)
+
+        # (可选) cross-layer global pool: 每层 reference 同一个 model 级 pool
+        if cross_layer_pool is not None:
+            object.__setattr__(moe_block, "cross_layer_lora_pool", cross_layer_pool)
 
         # monkey-patch forward
         moe_block._original_forward = moe_block.forward
@@ -863,6 +939,10 @@ def save_moe_lora_state(
         "moe_lora_balance_loss_coef": getattr(finetuning_args, "moe_lora_balance_loss_coef", 0.0),
         "moe_lora_hidden_bottleneck_dim": getattr(finetuning_args, "moe_lora_hidden_bottleneck_dim", 0),
         "moe_lora_n_groups": getattr(finetuning_args, "moe_lora_n_groups", 1),
+        "moe_lora_wl_init": getattr(finetuning_args, "moe_lora_wl_init", "default"),
+        "moe_lora_n_global": getattr(finetuning_args, "moe_lora_n_global", 0),
+        "moe_lora_global_rank": getattr(finetuning_args, "moe_lora_global_rank", 0),
+        "moe_lora_global_alpha": getattr(finetuning_args, "moe_lora_global_alpha", 0),
         "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
     }
     with open(os.path.join(save_dir, "moe_lora_config.json"), "w") as f:

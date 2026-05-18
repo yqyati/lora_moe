@@ -1,0 +1,67 @@
+### model
+model_name_or_path: allenai/OLMoE-1B-7B-0924
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (V2-Enhanced PerLayer routed + Cross-layer Global Pool, OLMoE math)
+# 设计:
+#   - per-layer routed pool (N_local=8, 每层独立, rank=8)
+#   - cross-layer global pool (N_global=64, 所有层共享, rank=16) -- rank 比 per-layer 大 2x
+#   - per-layer W_l 输出 (N_local + N_global) = 72 维 logits
+#   - Joint top-K=4: per-layer 和 cross-layer expert 在 logits 空间统一竞争,
+#     W_l 自己学会"该 token 该选 local 还是 global expert"
+#   - Joint 模式不算 balance loss (避免 per-pool n_experts 不对齐的边界问题)
+#
+# 设计 rationale: cross-layer expert 要 serve 多个 layer, 给它更大的 rank (16) 增强表达力;
+# per-layer expert 服务单层的局部 specialization, rank=8 已足够.
+#
+# 参数预算严格对齐 baseline v2_enhanced (global pool, n_experts=128, ~9.1M)
+#
+# 参数估算 (16 layers, d_model=2048):
+#   Per-layer pool: 16 × 8 × 2 × 8 × 2048 = 4.19M
+#   Cross-layer pool: 1 × 64 × 2 × 16 × 2048 = 4.19M
+#   W_l per layer (proj_in=64+16=80, proj_out=72): 16 × 80 × 72 = 0.09M
+#   h_proj per layer (hidden_bottleneck=16): 16 × 2048 × 16 = 0.52M
+#   总 trainable ≈ 9.00M (~0.13% of 6.9B, ≈ baseline global 9.1M)
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 16                     # N_local: per-layer pool size
+moe_lora_n_global: 64                     # ⭐ N_global: cross-layer pool size
+moe_lora_rank: 4                          # per-layer pool rank
+moe_lora_alpha: 8                        # per-layer pool alpha (scale = 2.0)
+moe_lora_global_rank: 16                  # ⭐ cross-layer pool rank (per-layer 的 2x)
+moe_lora_global_alpha: 32                 # ⭐ cross-layer pool alpha (scale = 2.0)
+moe_lora_top_k: 4                         # joint top-K
+moe_lora_pool_share: per_layer            # 必须 per_layer (cross_layer 由 n_global 控制)
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_balance_loss_coef: 0.0           # joint 模式 dispatch 跳过 balance loss
+moe_lora_hidden_bottleneck_dim: 32
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 64
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/olmoe/moe_lora/v2_local_xL
+logging_steps: 5
+save_steps: 400
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: olmoe_v2_local_xL
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 8
+learning_rate: 4.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_find_unused_parameters: true
