@@ -1,0 +1,61 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (A1: w/o RCP — routing_mode=independent)
+# Ablation A1: 移除 RCP 机制 — 用 IndependentRouter 替代 RoutingProjection
+#   - 不使用 base router logits 作为 routing 输入
+#   - 每层独立 IndependentRouter = Linear(d_model=2048, n_lora=512)
+# 其他维持主配置: N=512, r=8, top_k=8, pool_share=global, n_groups=1
+#
+# 参数估算:
+#   LoRA pool: 512 × 2 × 8 × 2048 = 16.78M (= main)
+#   IndependentRouter (per_layer): 26 × 2048 × 512 = 27.26M (> main 的 0.85M W_l + 3.40M h_proj)
+#   总 trainable ≈ 44M (vs main 21M)
+# Note: 即使 A1 用 MORE 参数, 若性能仍弱于 main → 强烈支持 RCP 价值
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 512
+moe_lora_n_groups: 1
+moe_lora_rank: 8
+moe_lora_alpha: 16
+moe_lora_top_k: 8
+moe_lora_pool_share: global
+moe_lora_w_share: per_layer
+moe_lora_routing_mode: independent       # ⭐ 关键 ablation 变量
+moe_lora_target_layers: all
+moe_lora_hidden_bottleneck_dim: 0        # independent 模式不用 bottleneck
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/ablation_A1_no_rcp
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_ablation_A1_no_rcp
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: false
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

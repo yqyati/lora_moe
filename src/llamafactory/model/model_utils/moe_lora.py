@@ -380,20 +380,38 @@ class LoRAPool(nn.Module):
 def _apply_lora_with_optional_cross_pool(moe_block, h_input, p_L):
     """LoRA dispatch helper:
     - 无 cross-layer pool: 走原 LoRAPool.forward 路径(单 pool 自己 top-K + balance loss).
-    - 有 cross-layer pool: joint top-K (over n_local+n_global), 按 idx<n_local 拆分
-      dispatch 到 per-layer 和 cross-layer pool, 各自 dispatch 后加和.
-      Joint 模式不算 balance loss(由 LoRAPool.dispatch 跳过).
+    - 有 cross-layer pool:
+        * Default (top_k_local/global=0): joint top-K (over n_local+n_global combined),
+          按 idx<n_local 拆分 dispatch 到 per-layer 和 cross-layer pool.
+        * Split mode (top_k_local>0 AND top_k_global>0): per-layer 和 global pool 各自
+          独立 top-K (互不竞争). 给两个 pool 保证最低 quota.
+      Joint/split 模式都不算 balance loss(由 LoRAPool.dispatch 跳过).
     """
     cross_pool = getattr(moe_block, "cross_layer_lora_pool", None)
     if cross_pool is None:
         return moe_block.lora_pool(h_input, p_L)
 
     n_local = moe_block.lora_pool.n_experts
-    K = moe_block.lora_pool.top_k  # joint top-K (per-layer 和 cross-layer 共用 K)
-
     p_L_h = p_L.to(h_input.dtype)
-    topk_vals, topk_idx = p_L_h.topk(K, dim=-1)               # (..., K)
-    local_mask = topk_idx < n_local                            # bool, (..., K)
+
+    # Split top-K mode: each pool selects independently from its own logits slice
+    fargs = getattr(moe_block, "_finetuning_args", None)
+    k_local = getattr(fargs, "moe_lora_top_k_local", 0) if fargs is not None else 0
+    k_global = getattr(fargs, "moe_lora_top_k_global", 0) if fargs is not None else 0
+
+    if k_local > 0 and k_global > 0:
+        p_local = p_L_h[..., :n_local]                            # (..., n_local)
+        p_global = p_L_h[..., n_local:]                           # (..., n_global)
+        local_vals, local_idx = p_local.topk(k_local, dim=-1)     # (..., k_local)
+        global_vals, global_idx = p_global.topk(k_global, dim=-1) # (..., k_global)
+        out_local = moe_block.lora_pool.dispatch(h_input, local_vals, local_idx)
+        out_global = cross_pool.dispatch(h_input, global_vals, global_idx)
+        return out_local + out_global
+
+    # Default: joint top-K over combined logits
+    K = moe_block.lora_pool.top_k
+    topk_vals, topk_idx = p_L_h.topk(K, dim=-1)                   # (..., K)
+    local_mask = topk_idx < n_local                                # bool, (..., K)
     local_mask_f = local_mask.to(topk_vals.dtype)
 
     local_idx = topk_idx.masked_fill(~local_mask, 0)
@@ -943,6 +961,8 @@ def save_moe_lora_state(
         "moe_lora_n_global": getattr(finetuning_args, "moe_lora_n_global", 0),
         "moe_lora_global_rank": getattr(finetuning_args, "moe_lora_global_rank", 0),
         "moe_lora_global_alpha": getattr(finetuning_args, "moe_lora_global_alpha", 0),
+        "moe_lora_top_k_local": getattr(finetuning_args, "moe_lora_top_k_local", 0),
+        "moe_lora_top_k_global": getattr(finetuning_args, "moe_lora_top_k_global", 0),
         "_meta_base_model": getattr(model.config, "name_or_path", "unknown"),
     }
     with open(os.path.join(save_dir, "moe_lora_config.json"), "w") as f:

@@ -1,0 +1,61 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (A2: w/o Global Pool — per_layer pool, N=20/layer, param-matched)
+# Ablation A2: 移除跨层共享池子 — 每层独立 LoRA pool
+#   - pool_share=per_layer (每层独立 20 个 expert)
+#   - N_per_layer=20 → 总 LoRA pool 参数严格匹配 main config
+# 其他维持主配置: r=8, top_k=8, RCP+bottleneck 完整保留
+#
+# 参数估算 (per_layer pool, 26 layers × 20 experts/层):
+#   LoRA pool: 26 × 20 × 2 × 8 × 2048 = 17.04M (≈ main's 16.78M, 差 1.5%)
+#   W_l (per-layer, Linear(64+64, 20)): 26 × 128 × 20 = 0.07M
+#   h_proj (per-layer): 26 × 2048 × 64 = 3.40M (= main)
+#   总 trainable ≈ 20.5M (≈ main 21M, param-matched)
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 20                   # ⭐ per_layer 模式: 每层 20 个 expert
+moe_lora_n_groups: 1
+moe_lora_rank: 8
+moe_lora_alpha: 16
+moe_lora_top_k: 8
+moe_lora_pool_share: per_layer           # ⭐ 关键 ablation 变量
+moe_lora_w_share: per_layer
+moe_lora_routing_mode: learned           # 保留 RCP
+moe_lora_target_layers: all
+moe_lora_hidden_bottleneck_dim: 64       # 保留 bottleneck
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/ablation_A2_no_global
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_ablation_A2_no_global
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true   # A2 用 per_layer pool 没有跨层共享参数问题, 可以开 ckpt 省显存
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json

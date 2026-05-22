@@ -560,6 +560,21 @@ class FinetuningArguments(
             "0 = use moe_lora_alpha (same alpha as per-layer pool)."
         },
     )
+    moe_lora_top_k_local: int = field(
+        default=0,
+        metadata={
+            "help": "MoE-LoRA: split top-K mode — per-layer pool selects this many experts independently. "
+            "0 (default) = use joint top-K over (per-layer + global) combined logits. "
+            "When both top_k_local and top_k_global > 0, switch to split mode: per-layer and global pools select independently."
+        },
+    )
+    moe_lora_top_k_global: int = field(
+        default=0,
+        metadata={
+            "help": "MoE-LoRA: split top-K mode — cross-layer global pool selects this many experts independently. "
+            "See moe_lora_top_k_local."
+        },
+    )
     moe_lora_das_init_path: Optional[str] = field(
         default=None,
         metadata={

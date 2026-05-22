@@ -3,36 +3,43 @@ model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
 trust_remote_code: true
 use_reentrant_gc: false
 
-### method (MoELoRA / baseline2 — DeepSeek-V2-Lite, code)
-# 同 math 版,只换 dataset。
+### method (v2_local_xL — DeepSeek-V2-Lite math, variant F3)
+# Per-layer fixed: N=32, r=4 (13.6M)
+# Cross-layer global: N=128, r=15 (N×r=1920) → ~3.93M
+# Total: per-layer + global + W_l + h_proj ≈ 21-22M
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 16
-moe_lora_rank: 16
-moe_lora_alpha: 32
-moe_lora_top_k: 2
+moe_lora_n_experts: 32
+moe_lora_n_global: 128
+moe_lora_rank: 4
+moe_lora_alpha: 8
+moe_lora_global_rank: 15
+moe_lora_global_alpha: 30
+moe_lora_top_k: 8
 moe_lora_pool_share: per_layer
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
-moe_lora_routing_mode: independent
+moe_lora_balance_loss_coef: 0.0
+moe_lora_hidden_bottleneck_dim: 64
 
 ### dataset
-dataset: magicoder_oss_75k
+dataset: metamathqa_r1
 template: default
 cutoff_len: 2048
+max_samples: 80000
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/deepseek_v2_lite/moe_lora_code/baseline2_moelora
+output_dir: saves/deepseek_v2_lite/moe_lora/v2_local_xL_F3
 logging_steps: 5
-save_steps: 100
+save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb
-run_name: deepseek_v2_lite_baseline2_code
+run_name: deepseek_v2_lite_v2_local_xL_F3
 
 ### train
 per_device_train_batch_size: 16

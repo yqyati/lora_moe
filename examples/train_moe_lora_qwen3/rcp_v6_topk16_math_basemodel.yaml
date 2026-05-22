@@ -1,0 +1,53 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B-Base
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (RCP + Hierarchical Pool) — v6: 大 top_k 增加 routing 多样性
+# Hypothesis: 更多 expert per token → 输出更平滑,泛化更好
+# n_groups=2 × 256 LoRA/组, top_k=16, rank=8
+# 参数 ≈ 35M
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 512
+moe_lora_n_groups: 2
+moe_lora_rank: 8
+moe_lora_alpha: 16
+moe_lora_top_k: 16
+moe_lora_pool_share: global
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_hidden_bottleneck_dim: 32
+
+### dataset
+dataset: metamathqa_r1
+template: qwen3
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/moe_lora/rcp_v6_topk16_math
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: qwen3_rcp_v6_topk16_math
+
+### train
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 3
+learning_rate: 2.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json
