@@ -1,0 +1,47 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (MoLA — REVERSED allocation, matched-param ~21.4M)
+# Reverse of MoLA paper: shallower layers get more experts (16) and deeper get fewer (4).
+# Same total experts (232) and same rank (22) as mola_inc_match -> identical param budget.
+stage: sft
+do_train: true
+finetuning_type: mola
+mola_n_experts_per_layer: 16,16,16,12,12,12,12,10,10,10,10,10,8,8,8,8,8,6,6,6,6,6,4,4,4,4
+mola_rank: 22
+mola_alpha: 44
+mola_top_k: 2
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/mola_dec_match_math
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: deepseek_v2_lite_mola_dec_match_math
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

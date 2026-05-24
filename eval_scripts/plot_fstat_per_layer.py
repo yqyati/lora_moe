@@ -26,6 +26,8 @@ def main():
     ap.add_argument("--ours_label", default="AnchorLoRA")
     ap.add_argument("--baseline_label", default="MoELoRA")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--y_scale", default="linear", choices=["linear", "sqrt", "cbrt", "symlog"],
+                    help="y-axis scale: linear / sqrt / cbrt (more aggressive compress) / symlog")
     args = ap.parse_args()
 
     layers, ours_f, base_f, ours_avg, base_avg = load_fstats(args.alignment_json)
@@ -41,7 +43,25 @@ def main():
     ax.set_xlabel("Layer index $\\ell$")
     ax.set_ylabel("Per-layer F-statistic")
     ax.set_xlim(-0.5, len(layers) - 0.5)
-    ax.set_ylim(0, max(ours_f.max(), base_f.max()) * 1.15)
+    y_min = max(0, min(ours_f.min(), base_f.min()) * 0.7) if args.y_scale in ("sqrt", "cbrt", "symlog") else 0
+    ax.set_ylim(y_min, max(ours_f.max(), base_f.max()) * 1.15)
+    if args.y_scale == "sqrt":
+        ax.set_yscale("function", functions=(lambda x: np.sqrt(np.clip(x, 0, None)),
+                                              lambda x: x ** 2))
+        import matplotlib.ticker as mt
+        ax.set_yticks([15, 25, 50, 100, 200, 300])
+        ax.yaxis.set_major_formatter(mt.FormatStrFormatter("%d"))
+    elif args.y_scale == "cbrt":
+        ax.set_yscale("function", functions=(lambda x: np.cbrt(np.clip(x, 0, None)),
+                                              lambda x: x ** 3))
+        import matplotlib.ticker as mt
+        ax.set_yticks([15, 25, 50, 100, 200, 300])
+        ax.yaxis.set_major_formatter(mt.FormatStrFormatter("%d"))
+    elif args.y_scale == "symlog":
+        ax.set_yscale("symlog", linthresh=100)
+        import matplotlib.ticker as mt
+        ax.set_yticks([10, 25, 50, 75, 100, 200, 300])
+        ax.yaxis.set_major_formatter(mt.FormatStrFormatter("%d"))
     ax.grid(axis="y", linestyle=":", alpha=0.4)
     ax.legend(loc="upper right", frameon=False, fontsize=9)
     fig.tight_layout()

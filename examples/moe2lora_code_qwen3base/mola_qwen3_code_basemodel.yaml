@@ -1,0 +1,49 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B-Base
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (MoLA NAACL 2024: per-layer expert allocation + independent routing)
+# Qwen3 48 层,递增分配:[2×12, 4×12, 6×12, 8×12]
+# 总和 = 24 + 48 + 72 + 96 = 240 experts
+# 参数:240 × 2(A,B) × rank=32 × 2048 + per-layer router (48 × 2048 × n_exp_l)
+#       = 31.46M + 0.49M ≈ 31.95M(略低于 RCP 40M,可接受 ~0.105%)
+# 注:rank=32 已经是 MoLA 在 Qwen3 上较激进的配置,继续提升 rank 会溢出
+stage: sft
+do_train: true
+finetuning_type: mola
+mola_n_experts_per_layer: "2,2,2,2,2,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4,4,4,4,6,6,6,6,6,6,6,6,6,6,6,6,8,8,8,8,8,8,8,8,8,8,8,8"
+mola_rank: 32
+mola_alpha: 64                            # 2 × rank
+mola_top_k: 2
+
+### dataset
+dataset: magicoder_oss_75k
+template: qwen3
+cutoff_len: 2048
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3/moe_lora_code/basemodel_mola
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: qwen3_mola_code_basemodel
+
+### train
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 3
+learning_rate: 6.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_config.json

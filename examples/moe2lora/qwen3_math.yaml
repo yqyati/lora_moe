@@ -3,21 +3,23 @@ model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B-Base
 trust_remote_code: true
 use_reentrant_gc: false
 
-### method (RCP + Hierarchical Pool) — v1 RESTORED (original config from first run)
-# Qwen3-30B-A3B: 48 层, N_E=128, top-8 routing
-# 2 groups × 256 LoRA = 512 total
+### method (MoE^2 best on Qwen3-30B-A3B for MetaMathQA)
+# Hierarchical global pool: N_L=512 split into G=2 groups (each layer routes
+# within its group), rank=16, top-K=8, hidden bottleneck d_b=32, no balance loss.
+# Trainable params: 38.67M (matches Qwen3 row in main table).
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 256
+moe_lora_n_experts: 512
 moe_lora_n_groups: 2
-moe_lora_rank: 32
-moe_lora_alpha: 64
+moe_lora_rank: 16
+moe_lora_alpha: 32
 moe_lora_top_k: 8
 moe_lora_pool_share: global
 moe_lora_w_share: per_layer
 moe_lora_target_layers: all
-moe_lora_hidden_bottleneck_dim: 128
+moe_lora_balance_loss_coef: 0.0
+moe_lora_hidden_bottleneck_dim: 32
 
 ### dataset
 dataset: metamathqa_r1
@@ -28,14 +30,14 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/qwen3/moe_lora/moe2_best
+output_dir: saves/qwen3/moe_lora/moe2_qwen3_math
 logging_steps: 5
 save_steps: 100
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb
-run_name: qwen3_moe2_best_math
+run_name: moe2_qwen3_math
 
 ### train
 per_device_train_batch_size: 12

@@ -3,21 +3,10 @@ model_name_or_path: /data/android/yqy/work/lora_moe/model/Qwen3-30B-A3B-Base
 trust_remote_code: true
 use_reentrant_gc: false
 
-### method (RCP + Hierarchical Pool) — v1 RESTORED (original config from first run)
-# Qwen3-30B-A3B: 48 层, N_E=128, top-8 routing
-# 2 groups × 256 LoRA = 512 total
+### method (FFT: 全参数微调,作为性能上界参考)
 stage: sft
 do_train: true
-finetuning_type: moe_lora
-moe_lora_n_experts: 256
-moe_lora_n_groups: 2
-moe_lora_rank: 32
-moe_lora_alpha: 64
-moe_lora_top_k: 8
-moe_lora_pool_share: global
-moe_lora_w_share: per_layer
-moe_lora_target_layers: all
-moe_lora_hidden_bottleneck_dim: 128
+finetuning_type: full
 
 ### dataset
 dataset: metamathqa_r1
@@ -28,25 +17,27 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/qwen3/moe_lora/moe2_best
+output_dir: saves/qwen3/fft_math/fft_qwen3base
 logging_steps: 5
 save_steps: 100
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: true
 report_to: wandb
-run_name: qwen3_moe2_best_math
+run_name: qwen3base_fft_math
 
 ### train
-per_device_train_batch_size: 12
-gradient_accumulation_steps: 3
-learning_rate: 6.0e-4
+# FFT 30B 模型显存压力极大,必须 ZeRO-3 + bf16 + grad_checkpointing
+# 8× H800: 30B × 2(bf16) / 8 = 7.5GB params/卡 + 优化器状态 + 激活
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 32
+learning_rate: 5.0e-5
 num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
 gradient_checkpointing: true
-ddp_find_unused_parameters: true
 
 ### deepspeed
 deepspeed: examples/deepspeed/ds_z3_config.json
+ddp_timeout: 180000000

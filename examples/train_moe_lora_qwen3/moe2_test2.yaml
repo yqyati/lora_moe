@@ -9,10 +9,10 @@ use_reentrant_gc: false
 stage: sft
 do_train: true
 finetuning_type: moe_lora
-moe_lora_n_experts: 256
-moe_lora_n_groups: 2
-moe_lora_rank: 32
-moe_lora_alpha: 64
+moe_lora_n_experts: 2048
+moe_lora_n_groups: 4
+moe_lora_rank: 4
+moe_lora_alpha: 8
 moe_lora_top_k: 8
 moe_lora_pool_share: global
 moe_lora_w_share: per_layer
@@ -28,7 +28,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/qwen3/moe_lora/moe2_best
+output_dir: saves/qwen3/moe_lora/moe2_best_t2
 logging_steps: 5
 save_steps: 100
 plot_loss: true

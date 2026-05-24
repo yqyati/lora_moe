@@ -46,7 +46,7 @@ def parse_args():
 def load_dataset(name, limit):
     from datasets import load_dataset as hf_load
     if name == "gsm8k":
-        ds = hf_load("openai/gsm8k", "main", split="test")
+        ds = hf_load("gsm8k", "main", split="test")
         prompts = [sample["question"] for sample in ds]
     elif name == "math500":
         ds = hf_load("HuggingFaceH4/MATH-500", split="test")

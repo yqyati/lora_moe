@@ -1,0 +1,31 @@
+{
+  "ours": {
+    "global": {
+      "avg_rsa": 0,
+      "avg_conditional_entropy": 0,
+      "avg_f_statistic": 0,
+      "avg_normalized_mutual_info": 0,
+      "n_layers_analyzed": 0
+    },
+    "per_layer": {}
+  },
+  "baseline": {
+    "global": {
+      "avg_rsa": 0,
+      "avg_conditional_entropy": 0,
+      "avg_f_statistic": 0,
+      "avg_normalized_mutual_info": 0,
+      "n_layers_analyzed": 0
+    },
+    "per_layer": {}
+  },
+  "config": {
+    "base_model": "/data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite",
+    "ours_path": "saves/deepseek_v2_lite/moe_lora/rcp_global_best",
+    "baseline_path": "saves/deepseek_v2_lite/moe_lora/baseline2_moelora_math",
+    "dataset": "gsm8k",
+    "limit": 200,
+    "batch_size": 4,
+    "save_dir": "analysis_results/routing_alignment_deepseek_math"
+  }
+}

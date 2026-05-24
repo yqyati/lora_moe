@@ -27,8 +27,8 @@ stage: sft
 do_train: true
 finetuning_type: das_lora
 das_lora_selected_experts_path: eval_results/das_deepseek_v2_lite_math.json
-das_lora_rank: 28                       # 调到 19M 量级
-das_lora_alpha: 56
+das_lora_rank: 52                       # 22M, matched to ours
+das_lora_alpha: 104
 
 ### dataset
 dataset: metamathqa_r1
