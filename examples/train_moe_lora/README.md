@@ -96,16 +96,12 @@ torchrun --nproc_per_node=8 eval_scripts/eval_math500.py \
     --batch_size 512 \
     --max_new_tokens 512
 
-torchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
-    --base_model /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/deepseek_v2_lite/moe_lora_code/follow \
-    --batch_size 512 \
-    --max_new_tokens 512
+
 
 
 torchrun --nproc_per_node=8 eval_scripts/eval_humaneval.py \
     --base_model /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
-    --adapter_path /data/android/yqy/work/LlamaFactory/saves/deepseek_v2_lite/moe_lora_code/follow \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/deepseek_v2_lite/moe_lora_code/rcp \
     --batch_size 64 \
     --max_new_tokens 512 \
     --chat_mode \
@@ -417,4 +413,8 @@ A: 使用 `torchrun --nproc_per_node=8` 多卡并行 + 大 batch（如 64）可�
       baseline2_moelora
 
   # 跑 base model(无 adapter)
-  bash eval_scripts/run_eval_medical_vl.sh "" base
+  bash eval_scripts/run_eval_medical_vl.sh "" basetorchrun --nproc_per_node=8 eval_scripts/eval_mbpp.py \
+    --base_model /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite \
+    --adapter_path /data/android/yqy/work/LlamaFactory/saves/deepseek_v2_lite/moe_lora_code/moe2_deepseek_code_n256r16 \
+    --batch_size 512 \
+    --max_new_tokens 512
