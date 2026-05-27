@@ -1,0 +1,51 @@
+### model
+model_name_or_path: /data/android/yqy/work/lora_moe/model/DeepSeek-V2-Lite
+trust_remote_code: true
+use_reentrant_gc: false
+
+### method (MoE^2 ours, N=128 r=34 d_b=64, top_K=4 — matched 22M, K reduced for efficiency)
+stage: sft
+do_train: true
+finetuning_type: moe_lora
+moe_lora_n_experts: 128
+moe_lora_n_groups: 1
+moe_lora_rank: 34
+moe_lora_alpha: 68
+moe_lora_top_k: 4
+moe_lora_pool_share: global
+moe_lora_w_share: per_layer
+moe_lora_target_layers: all
+moe_lora_balance_loss_coef: 0.0
+moe_lora_hidden_bottleneck_dim: 64
+
+### dataset
+dataset: metamathqa_r1
+template: default
+cutoff_len: 2048
+max_samples: 80000
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek_v2_lite/moe_lora/rcp_global_N128_r34_K4_matched
+logging_steps: 5
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: wandb
+run_name: rcp_global_N128_r34_K4_matched
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 4.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: false
+ddp_find_unused_parameters: true
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z2_config.json
